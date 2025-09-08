@@ -177,6 +177,10 @@ groups:
 └── README.md           # Project documentation
 ```
 
+## Troubleshooting
+
+如果遇到部署或运行问题，请查看 [故障排除指南](TROUBLESHOOTING.md)。
+
 ## License
 
 MIT License
