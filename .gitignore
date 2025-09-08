@@ -1,0 +1,21 @@
+# Binary files
+domain-exporter
+domain-exporter.exe
+
+# Go related
+*.log
+vendor/
+
+# IDE related
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp

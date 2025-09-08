@@ -1,0 +1,19 @@
+# Domain registration expiry check configuration file
+server:
+  port: 8080
+  metrics_path: "/metrics"
+
+checker:
+  # Check interval (seconds)
+  check_interval: 3600
+  # Concurrency
+  concurrency: 10
+  # Connection timeout (seconds)
+  timeout: 30
+
+# List of domains to check
+domains:
+  - google.com
+  - github.com
+  - stackoverflow.com
+  - example.com
