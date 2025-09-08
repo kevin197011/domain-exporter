@@ -35,7 +35,7 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
-            - "-config=/root/config.yaml"
+            - "-config=/app/config.yaml"
           ports:
             - name: http
               containerPort: {{ .Values.config.server.port }}
@@ -50,7 +50,7 @@ spec:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
             - name: config
-              mountPath: /root/config.yaml
+              mountPath: /app/config.yaml
               subPath: config.yaml
               readOnly: true
           env:

@@ -24,7 +24,7 @@ RUN apk --no-cache add ca-certificates tzdata && \
     cp /usr/share/zoneinfo/Asia/Hong_Kong /etc/localtime && \
     echo "Asia/Hong_Kong" > /etc/timezone
 
-WORKDIR /root/
+WORKDIR /app
 
 # Copy binary from build stage
 COPY --from=builder /app/domain-exporter .
