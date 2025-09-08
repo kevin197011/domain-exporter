@@ -39,6 +39,17 @@ check: fmt vet test
 docker-build:
 	docker build -t $(APP_NAME) .
 
+# Test application functionality
+test-app:
+	./test-app.sh
+
+# Docker compose commands
+docker-up:
+	docker-compose up -d
+
+docker-down:
+	docker-compose down
+
 # Show help
 help:
 	@echo "Available commands:"
@@ -47,7 +58,10 @@ help:
 	@echo "  deps        - Install dependencies"
 	@echo "  clean       - Clean build files"
 	@echo "  test        - Run tests"
+	@echo "  test-app    - Test application functionality"
 	@echo "  fmt         - Format code"
 	@echo "  vet         - Check code"
 	@echo "  check       - Full check (fmt+vet+test)"
 	@echo "  docker-build - Build Docker image"
+	@echo "  docker-up   - Start with Docker Compose"
+	@echo "  docker-down - Stop Docker Compose"

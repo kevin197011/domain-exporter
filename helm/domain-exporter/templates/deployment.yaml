@@ -50,7 +50,8 @@ spec:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
             - name: config
-              mountPath: /etc/domain-exporter
+              mountPath: /etc/domain-exporter/config.yaml
+              subPath: config.yaml
               readOnly: true
           env:
             - name: TZ
