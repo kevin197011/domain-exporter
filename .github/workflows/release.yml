@@ -1,0 +1,119 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.24'
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract version
+      id: version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+    - name: Build binaries
+      run: |
+        # Build for multiple platforms
+        GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/domain-exporter-linux-amd64 .
+        GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o dist/domain-exporter-linux-arm64 .
+        GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o dist/domain-exporter-darwin-amd64 .
+        GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o dist/domain-exporter-darwin-arm64 .
+        GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o dist/domain-exporter-windows-amd64.exe .
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=semver,pattern={{major}}
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Generate changelog
+      id: changelog
+      run: |
+        if [ -f CHANGELOG.md ]; then
+          # Extract changelog for this version
+          awk '/^## \[?'${GITHUB_REF#refs/tags/v}'\]?/{flag=1; next} /^## \[?[0-9]/{flag=0} flag' CHANGELOG.md > release_notes.md
+        else
+          echo "Release ${{ steps.version.outputs.VERSION }}" > release_notes.md
+          echo "" >> release_notes.md
+          echo "### Changes" >> release_notes.md
+          git log --pretty=format:"- %s" $(git describe --tags --abbrev=0 HEAD^)..HEAD >> release_notes.md
+        fi
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        body_path: release_notes.md
+        files: |
+          dist/*
+          config.yaml
+          helm/domain-exporter/*.yaml
+        draft: false
+        prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Update Helm Chart
+      run: |
+        # Update Chart.yaml with new version
+        sed -i "s/^version:.*/version: ${{ steps.version.outputs.VERSION }}/" helm/domain-exporter/Chart.yaml
+        sed -i "s/^appVersion:.*/appVersion: \"${{ steps.version.outputs.VERSION }}\"/" helm/domain-exporter/Chart.yaml
+        
+        # Update values.yaml with new image tag
+        sed -i "s/tag: .*/tag: \"${{ steps.version.outputs.VERSION }}\"/" helm/domain-exporter/values.yaml
+        sed -i "s/tag: .*/tag: \"${{ steps.version.outputs.VERSION }}\"/" helm/domain-exporter/values-production.yaml
+
+    - name: Package Helm Chart
+      run: |
+        helm package helm/domain-exporter --destination dist/
+
+    - name: Upload Helm Chart to Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: dist/*.tgz
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

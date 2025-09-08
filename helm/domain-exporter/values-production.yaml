@@ -1,0 +1,128 @@
+# Production values for domain-exporter.
+# This is a YAML-formatted file for production deployment.
+
+replicaCount: 2
+
+image:
+  repository: ghcr.io/kevin197011/domain-exporter
+  pullPolicy: Always
+  tag: "v1.0.0"
+
+resources:
+  limits:
+    cpu: 200m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+service:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  hosts:
+    - host: domain-exporter.yourdomain.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: domain-exporter-tls
+      hosts:
+        - domain-exporter.yourdomain.com
+
+# Production domain configuration
+config:
+  server:
+    port: 8080
+    metrics_path: "/metrics"
+  
+  checker:
+    # Check every 2 hours in production
+    check_interval: 7200
+    # Higher concurrency for production
+    concurrency: 20
+    # Longer timeout for production
+    timeout: 60
+  
+  # Production domains to monitor
+  domains:
+    - yourdomain.com
+    - api.yourdomain.com
+    - www.yourdomain.com
+    - admin.yourdomain.com
+
+# Enhanced monitoring for production
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    namespace: "monitoring"
+    labels:
+      release: prometheus
+    interval: 30s
+    scrapeTimeout: 15s
+    path: /metrics
+    port: http
+
+# Production health checks
+healthCheck:
+  enabled: true
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 60
+    periodSeconds: 30
+    timeoutSeconds: 10
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+# Production security context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 2000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+  capabilities:
+    drop:
+    - ALL
+
+# Node affinity for production
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchExpressions:
+          - key: app.kubernetes.io/name
+            operator: In
+            values:
+            - domain-exporter
+        topologyKey: kubernetes.io/hostname
