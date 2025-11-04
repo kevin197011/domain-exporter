@@ -61,6 +61,8 @@ spec:
               value: {{ .Values.nacos.dataId | quote }}
             - name: NACOS_GROUP
               value: {{ .Values.nacos.group | quote }}
+            - name: NACOS_SKIP_SSL_VERIFY
+              value: {{ .Values.nacos.skipSSLVerify | quote }}
             {{- end }}
             {{- with .Values.env }}
             {{- toYaml . | nindent 12 }}

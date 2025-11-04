@@ -18,12 +18,13 @@ type Config struct {
 	Timeout           int      `yaml:"timeout"`
 	
 	// Nacos连接配置（从本地配置文件获取）
-	NacosUrl      string `yaml:"nacos_url"`
-	Username      string `yaml:"username"`
-	Password      string `yaml:"password"`
-	NamespaceId   string `yaml:"namespace_id"`
-	DataId        string `yaml:"data_id"`
-	Group         string `yaml:"group"`
+	NacosUrl          string `yaml:"nacos_url"`
+	Username          string `yaml:"username"`
+	Password          string `yaml:"password"`
+	NamespaceId       string `yaml:"namespace_id"`
+	DataId            string `yaml:"data_id"`
+	Group             string `yaml:"group"`
+	SkipSSLVerify     bool   `yaml:"skip_ssl_verify"`  // 跳过SSL证书验证
 }
 
 // LoadConfig 加载配置（优先使用环境变量，然后是配置文件）
@@ -55,69 +56,7 @@ func (c *Config) IsNacosEnabled() bool {
 	return c.NacosUrl != ""
 }
 
-// GetNacosServerHost 从URL中提取服务器地址
-func (c *Config) GetNacosServerHost() string {
-	if c.NacosUrl == "" {
-		return ""
-	}
-	
-	// 简单解析URL，提取主机和端口
-	url := c.NacosUrl
-	if strings.HasPrefix(url, "http://") {
-		url = strings.TrimPrefix(url, "http://")
-	} else if strings.HasPrefix(url, "https://") {
-		url = strings.TrimPrefix(url, "https://")
-	}
-	
-	// 移除路径部分
-	if idx := strings.Index(url, "/"); idx != -1 {
-		url = url[:idx]
-	}
-	
-	return url
-}
 
-// GetNacosServerIP 获取Nacos服务器IP
-func (c *Config) GetNacosServerIP() string {
-	host := c.GetNacosServerHost()
-	if host == "" {
-		return "127.0.0.1"
-	}
-	
-	// 分离IP和端口
-	if idx := strings.LastIndex(host, ":"); idx != -1 {
-		return host[:idx]
-	}
-	
-	return host
-}
-
-// GetNacosServerPort 获取Nacos服务器端口
-func (c *Config) GetNacosServerPort() uint64 {
-	host := c.GetNacosServerHost()
-	if host == "" {
-		return 8848
-	}
-	
-	// 检查是否明确指定了端口
-	if idx := strings.LastIndex(host, ":"); idx != -1 {
-		portStr := host[idx+1:]
-		if port, err := strconv.ParseUint(portStr, 10, 64); err == nil {
-			return port
-		}
-	}
-	
-	// 如果URL中没有明确指定端口，根据协议推断
-	// 建议：在生产环境中应该在URL中明确指定端口
-	if strings.HasPrefix(c.NacosUrl, "https://") {
-		// HTTPS 默认 443，但建议明确指定
-		return 443
-	}
-	
-	// HTTP 或无协议前缀时，使用 Nacos 默认端口
-	// 注意：如果你的 Nacos 使用其他端口（如 443），请在 URL 中明确指定
-	return 8848
-}
 
 // loadFromEnv 从环境变量加载配置
 func loadFromEnv(config *Config) {
@@ -139,6 +78,9 @@ func loadFromEnv(config *Config) {
 	}
 	if val := os.Getenv("NACOS_GROUP"); val != "" {
 		config.Group = val
+	}
+	if val := os.Getenv("NACOS_SKIP_SSL_VERIFY"); val != "" {
+		config.SkipSSLVerify = val == "true" || val == "1"
 	}
 	
 	// 业务配置

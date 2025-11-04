@@ -1,9 +1,11 @@
 package main
 
 import (
+	"crypto/tls"
 	"fmt"
 	"log/slog"
-	"net"
+	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,37 +31,32 @@ func NewNacosConfigManager(localConfig *Config) (*NacosConfigManager, error) {
 		return nil, nil
 	}
 
-	// 记录详细的连接信息
-	serverIP := localConfig.GetNacosServerIP()
-	serverPort := localConfig.GetNacosServerPort()
-	
 	slog.Info("创建Nacos配置管理器", 
 		"nacos_url", localConfig.NacosUrl,
-		"server_ip", serverIP,
-		"server_port", serverPort,
 		"namespace_id", localConfig.NamespaceId,
 		"username", localConfig.Username,
 		"data_id", localConfig.DataId,
 		"group", localConfig.Group)
 
-	// 构建服务器配置
-	serverConfigs := []constant.ServerConfig{
-		{
-			IpAddr: serverIP,
-			Port:   serverPort,
-		},
-	}
+	// 使用 Nacos SDK 的内置 URL 解析，不做自定义处理
+	// 直接传递完整的 Nacos URL 给 SDK
+	serverConfigs := []constant.ServerConfig{}
+	
+	// 让 Nacos SDK 通过 ClientConfig 中的 Endpoint 来处理 URL
+	// 这样 SDK 会自动解析协议、主机、端口等信息
 
-	// 构建客户端配置，针对Kubernetes环境优化
+	// 构建客户端配置，直接使用原始 URL
 	clientConfig := constant.ClientConfig{
 		NamespaceId:         localConfig.NamespaceId,
-		TimeoutMs:           15000, // 增加超时时间到15秒
+		TimeoutMs:           20000, // 增加超时时间到20秒
 		NotLoadCacheAtStart: true,  // 不从缓存启动，避免文件权限问题
 		LogDir:              "/tmp/nacos/log",     // 使用临时目录
 		CacheDir:            "/tmp/nacos/cache",   // 使用临时目录
-		LogLevel:            "error",  // 进一步降低日志级别
+		LogLevel:            "debug",  // 增加日志级别以便调试
 		Username:            localConfig.Username,
 		Password:            localConfig.Password,
+		// 直接使用完整的 Nacos URL，让 SDK 自动处理
+		Endpoint:            localConfig.NacosUrl,  // 使用 Endpoint 而不是 ServerConfigs
 		// Kubernetes环境优化配置
 		UpdateThreadNum:      1,      // 减少线程数
 		UpdateCacheWhenEmpty: false,  // 空配置时不更新缓存
@@ -72,12 +69,28 @@ func NewNacosConfigManager(localConfig *Config) (*NacosConfigManager, error) {
 		"log_dir", clientConfig.LogDir,
 		"cache_dir", clientConfig.CacheDir)
 
-	// 创建配置客户端
-	slog.Info("正在创建Nacos配置客户端...")
+	// 为 HTTPS 连接配置 SSL 设置
+	if strings.HasPrefix(localConfig.NacosUrl, "https://") {
+		slog.Info("检测到HTTPS连接，配置SSL设置", "skip_ssl_verify", localConfig.SkipSSLVerify)
+		
+		if localConfig.SkipSSLVerify {
+			// 全局设置跳过 SSL 证书验证（用于开发/测试环境）
+			if transport, ok := http.DefaultTransport.(*http.Transport); ok {
+				if transport.TLSClientConfig == nil {
+					transport.TLSClientConfig = &tls.Config{}
+				}
+				transport.TLSClientConfig.InsecureSkipVerify = true
+				slog.Warn("已禁用SSL证书验证，仅适用于开发/测试环境")
+			}
+		}
+	}
+
+	// 创建配置客户端，使用 Endpoint 方式
+	slog.Info("正在创建Nacos配置客户端...", "endpoint", clientConfig.Endpoint)
 	client, err := clients.NewConfigClient(
 		vo.NacosClientParam{
 			ClientConfig:  &clientConfig,
-			ServerConfigs: serverConfigs,
+			ServerConfigs: serverConfigs, // 空的 serverConfigs，使用 Endpoint
 		},
 	)
 	if err != nil {
@@ -86,13 +99,6 @@ func NewNacosConfigManager(localConfig *Config) (*NacosConfigManager, error) {
 	}
 	
 	slog.Info("Nacos配置客户端创建成功")
-	
-	// 测试网络连通性
-	if err := testNacosConnectivity(localConfig); err != nil {
-		slog.Warn("Nacos网络连通性测试失败", "error", err)
-	} else {
-		slog.Info("Nacos网络连通性测试成功")
-	}
 
 	manager := &NacosConfigManager{
 		client:     client,
@@ -134,21 +140,44 @@ func (m *NacosConfigManager) loadConfigFromNacos() error {
 	slog.Info("尝试从Nacos加载配置", 
 		"namespace", m.config.NamespaceId,
 		"group", m.config.Group, 
-		"data_id", m.config.DataId)
-		
-	content, err := m.client.GetConfig(vo.ConfigParam{
+		"data_id", m.config.DataId,
+		"nacos_url", m.config.NacosUrl,
+		"username", m.config.Username)
+	
+	// 添加详细的参数日志
+	configParam := vo.ConfigParam{
 		DataId: m.config.DataId,
 		Group:  m.config.Group,
-	})
+	}
+	
+	slog.Debug("Nacos请求参数", 
+		"config_param", fmt.Sprintf("%+v", configParam))
+		
+	content, err := m.client.GetConfig(configParam)
 	if err != nil {
+		slog.Error("Nacos GetConfig 调用失败", 
+			"error", err,
+			"error_type", fmt.Sprintf("%T", err),
+			"namespace", m.config.NamespaceId,
+			"data_id", m.config.DataId,
+			"group", m.config.Group)
 		return fmt.Errorf("从Nacos获取配置失败: %w", err)
 	}
 
+	slog.Info("Nacos返回内容长度", "content_length", len(content))
+	
 	// 检查配置内容是否为空
 	if content == "" {
+		slog.Warn("Nacos配置内容为空", 
+			"namespace", m.config.NamespaceId,
+			"group", m.config.Group,
+			"data_id", m.config.DataId,
+			"nacos_console_url", fmt.Sprintf("%s/nacos", m.config.NacosUrl))
 		return fmt.Errorf("Nacos配置内容为空，请在Nacos控制台创建配置: namespace=%s, group=%s, dataId=%s", 
 			m.config.NamespaceId, m.config.Group, m.config.DataId)
 	}
+	
+	slog.Debug("Nacos配置内容", "content", content)
 
 	var nacosConfig Config
 	if err := yaml.Unmarshal([]byte(content), &nacosConfig); err != nil {
@@ -269,20 +298,3 @@ func (m *NacosConfigManager) Close() {
 	}
 }
 
-// testNacosConnectivity 测试Nacos网络连通性
-func testNacosConnectivity(config *Config) error {
-	serverIP := config.GetNacosServerIP()
-	serverPort := config.GetNacosServerPort()
-	address := fmt.Sprintf("%s:%d", serverIP, serverPort)
-	
-	slog.Info("测试Nacos网络连通性", "address", address)
-	
-	conn, err := net.DialTimeout("tcp", address, 5*time.Second)
-	if err != nil {
-		return fmt.Errorf("无法连接到Nacos服务器 %s: %w", address, err)
-	}
-	defer conn.Close()
-	
-	slog.Info("Nacos服务器网络连接正常")
-	return nil
-}
