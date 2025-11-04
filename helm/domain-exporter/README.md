@@ -18,7 +18,7 @@
 
 ```bash
 # 添加 Helm 仓库（如果有的话）
-helm repo add kk-domain-exporter https://your-helm-repo.com
+helm repo add domain-exporter https://your-helm-repo.com
 
 # 或者直接从本地安装
 helm install domain-exporter ./domain-exporter
@@ -50,7 +50,7 @@ helm install domain-exporter-dev ./domain-exporter -f ./domain-exporter/values-d
 | 参数 | 描述 | 默认值 |
 |------|------|--------|
 | `replicaCount` | 副本数量 | `1` |
-| `image.repository` | 镜像仓库 | `ghcr.io/kevin197011/kk-domain-exporter` |
+| `image.repository` | 镜像仓库 | `ghcr.io/kevin197011/domain-exporter` |
 | `image.tag` | 镜像标签 | `latest` |
 | `image.pullPolicy` | 镜像拉取策略 | `IfNotPresent` |
 
@@ -171,25 +171,25 @@ helm uninstall domain-exporter
 ### 查看 Pod 状态
 
 ```bash
-kubectl get pods -l app.kubernetes.io/name=kk-domain-exporter
+kubectl get pods -l app.kubernetes.io/name=domain-exporter
 ```
 
 ### 查看日志
 
 ```bash
-kubectl logs -l app.kubernetes.io/name=kk-domain-exporter
+kubectl logs -l app.kubernetes.io/name=domain-exporter
 ```
 
 ### 查看服务
 
 ```bash
-kubectl get svc -l app.kubernetes.io/name=kk-domain-exporter
+kubectl get svc -l app.kubernetes.io/name=domain-exporter
 ```
 
 ### 端口转发测试
 
 ```bash
-kubectl port-forward svc/domain-exporter-kk-domain-exporter 8080:8080
+kubectl port-forward svc/domain-exporter-domain-exporter 8080:8080
 curl http://localhost:8080/metrics
 ```
 
@@ -201,7 +201,7 @@ curl http://localhost:8080/metrics
 
 ```yaml
 scrape_configs:
-  - job_name: 'kk-domain-exporter'
+  - job_name: 'domain-exporter'
     kubernetes_sd_configs:
       - role: endpoints
         namespaces:
@@ -210,7 +210,7 @@ scrape_configs:
     relabel_configs:
       - source_labels: [__meta_kubernetes_service_name]
         action: keep
-        regex: domain-exporter-kk-domain-exporter
+        regex: domain-exporter-domain-exporter
 ```
 
 ### Grafana 仪表板

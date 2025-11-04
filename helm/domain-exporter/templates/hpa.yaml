@@ -2,14 +2,14 @@
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: {{ include "kk-domain-exporter.fullname" . }}
+  name: {{ include "domain-exporter.fullname" . }}
   labels:
-    {{- include "kk-domain-exporter.labels" . | nindent 4 }}
+    {{- include "domain-exporter.labels" . | nindent 4 }}
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: {{ include "kk-domain-exporter.fullname" . }}
+    name: {{ include "domain-exporter.fullname" . }}
   minReplicas: {{ .Values.autoscaling.minReplicas }}
   maxReplicas: {{ .Values.autoscaling.maxReplicas }}
   metrics:

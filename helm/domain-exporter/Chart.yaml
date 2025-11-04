@@ -1,5 +1,5 @@
 apiVersion: v2
-name: kk-domain-exporter
+name: domain-exporter
 description: A Helm chart for Domain Expiry Prometheus Exporter
 type: application
 version: 0.1.0

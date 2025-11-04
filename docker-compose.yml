@@ -1,6 +1,6 @@
 services:
   domain-exporter:
-    image: ghcr.io/kevin197011/kk-domain-exporter:latest
+    image: ghcr.io/kevin197011/domain-exporter:latest
     # build: .  # 取消注释以本地构建
     ports:
       - "8080:8080"

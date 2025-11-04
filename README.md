@@ -91,7 +91,7 @@ curl http://localhost:8080/metrics
 #### 使用预构建镜像
 ```bash
 # 拉取镜像
-docker pull ghcr.io/kevin197011/kk-domain-exporter:latest
+docker pull ghcr.io/kevin197011/domain-exporter:latest
 
 # 运行容器
 docker run -d \
@@ -99,7 +99,7 @@ docker run -d \
   -p 8080:8080 \
   -e DOMAINS="example.com,test.com" \
   -e CHECK_INTERVAL=3600 \
-  ghcr.io/kevin197011/kk-domain-exporter:latest
+  ghcr.io/kevin197011/domain-exporter:latest
 ```
 
 #### 本地构建

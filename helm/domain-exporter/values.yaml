@@ -1,4 +1,4 @@
-# Default values for kk-domain-exporter
+# Default values for domain-exporter
 replicaCount: 1
 
 image:
