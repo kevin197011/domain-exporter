@@ -108,12 +108,12 @@ func main() {
 			return
 		}
 		exporter.TriggerCheck()
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		fmt.Fprintf(w, `{"status": "triggered", "message": "域名检查已触发"}`)
 	})
 	http.HandleFunc("/config", func(w http.ResponseWriter, r *http.Request) {
 		currentConfig := exporter.getCurrentConfig()
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		
 		// 构建详细的配置信息
 		domainsJson := "["
@@ -145,25 +145,60 @@ func main() {
 			currentConfig.NacosUrl, currentConfig.NamespaceId, currentConfig.DataId, currentConfig.Group)
 	})
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprintf(w, `
-		<html>
-		<head><title>域名过期监控 Exporter</title></head>
-		<body>
-		<h1>域名过期监控 Exporter</h1>
-		<p><a href="/metrics">Metrics</a></p>
-		<p><a href="/trigger" onclick="triggerCheck(); return false;">手动触发检查</a></p>
-		<script>
-		function triggerCheck() {
-			fetch('/trigger', {method: 'POST'})
-				.then(response => response.json())
-				.then(data => alert(data.message))
-				.catch(error => alert('触发失败: ' + error));
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprintf(w, `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>域名过期监控 Exporter</title>
+	<style>
+		body { font-family: Arial, sans-serif; margin: 40px; }
+		h1 { color: #333; }
+		.button { 
+			display: inline-block; 
+			padding: 10px 20px; 
+			margin: 10px 5px; 
+			background-color: #007cba; 
+			color: white; 
+			text-decoration: none; 
+			border-radius: 5px; 
+			border: none;
+			cursor: pointer;
 		}
-		</script>
-		</body>
-		</html>
-		`)
+		.button:hover { background-color: #005a87; }
+		.info { margin-top: 20px; padding: 15px; background-color: #f5f5f5; border-radius: 5px; }
+	</style>
+</head>
+<body>
+	<h1>域名过期监控 Exporter</h1>
+	<div>
+		<a href="/metrics" class="button">查看 Metrics</a>
+		<button onclick="triggerCheck()" class="button">手动触发检查</button>
+		<a href="/config" class="button">查看配置</a>
+	</div>
+	<div class="info">
+		<h3>功能说明</h3>
+		<ul>
+			<li><strong>Metrics</strong>: Prometheus 格式的监控指标</li>
+			<li><strong>手动触发检查</strong>: 立即执行一次域名过期检查</li>
+			<li><strong>查看配置</strong>: 显示当前的配置信息</li>
+		</ul>
+	</div>
+	<script>
+	function triggerCheck() {
+		fetch('/trigger', {method: 'POST'})
+			.then(response => response.json())
+			.then(data => {
+				alert('✅ ' + data.message);
+			})
+			.catch(error => {
+				alert('❌ 触发失败: ' + error);
+			});
+	}
+	</script>
+</body>
+</html>`)
 	})
 
 	// 启动HTTP服务

@@ -175,14 +175,6 @@ func GetDomainInfoWithFallback(domain string, timeout time.Duration, config *Con
 	return nil, fmt.Errorf("WHOIS查询失败: %v", lastErr)
 }
 
-
-
-
-
-
-
-
-
 // parseExpirationFromRawData 从原始WHOIS数据中手动提取过期时间
 func parseExpirationFromRawData(domain, whoisData string) (*DomainInfo, error) {
 	slog.Debug("尝试从原始数据手动解析过期时间", "domain", domain)
@@ -265,9 +257,9 @@ func parseFlexibleDate(dateStr string) (time.Time, error) {
 	dateStr = strings.TrimSpace(dateStr)
 	
 	// 移除常见的后缀
-	dateStr = regexp.MustCompile(`\s+UTC$`).ReplaceAllString(dateStr, "")
-	dateStr = regexp.MustCompile(`\s+GMT$`).ReplaceAllString(dateStr, "")
-	dateStr = regexp.MustCompile(`\s+\+\d{4}$`).ReplaceAllString(dateStr, "")
+	dateStr = regexp.MustCompile(`\s+UTC`).ReplaceAllString(dateStr, "")
+	dateStr = regexp.MustCompile(`\s+GMT`).ReplaceAllString(dateStr, "")
+	dateStr = regexp.MustCompile(`\s+\+\d{4}`).ReplaceAllString(dateStr, "")
 	
 	// 尝试各种日期格式
 	formats := []string{

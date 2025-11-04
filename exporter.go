@@ -325,8 +325,6 @@ func (e *DomainExporter) logConfigChanges(oldConfig, newConfig *Config) {
 		}
 	}
 	
-
-	
 	// 检查超时时间变化
 	if oldConfig.Timeout != newConfig.Timeout {
 		changes["timeout"] = map[string]interface{}{
@@ -334,9 +332,6 @@ func (e *DomainExporter) logConfigChanges(oldConfig, newConfig *Config) {
 			"new": newConfig.Timeout,
 		}
 	}
-	
-
-	
 
 	
 	// 记录变化
