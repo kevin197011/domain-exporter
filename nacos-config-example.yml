@@ -1,0 +1,37 @@
+# 这是一个Nacos配置示例，需要在Nacos控制台中创建配置
+# Data ID: domain-exporter
+# Group: DEFAULT_GROUP
+# 配置格式: YAML
+
+domains:
+  - example.com
+  - google.com
+  - github.com
+  - stackoverflow.com
+
+# 监控间隔（秒）
+check_interval: 1800
+
+# HTTP服务端口
+port: 8080
+
+# 日志级别
+log_level: info
+
+# 并发控制 - 同时检查域名的最大数量
+max_concurrent: 10
+
+# 请求超时时间（秒）
+timeout: 30
+
+# 检测方法 (仅支持whois)
+detection_methods:
+  - whois
+
+# 备用WHOIS服务器
+whois_servers:
+  - whois.verisign-grs.com
+  - whois.internic.net
+  - whois.iana.org
+  - whois.publicinterestregistry.net
+  - whois.afilias.net

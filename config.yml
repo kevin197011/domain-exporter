@@ -1,0 +1,7 @@
+# Nacos配置 - 简化版本
+nacos_url: "http://192.168.1.11:8848"
+username: "nacos"
+password: "nacos"
+namespace_id: "devops"
+data_id: "domain-exporter"
+group: "DEFAULT_GROUP"

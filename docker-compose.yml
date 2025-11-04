@@ -1,0 +1,10 @@
+services:
+  domain-exporter:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config.yml:/root/config.yml
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai
