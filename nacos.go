@@ -94,15 +94,27 @@ func NewNacosConfigManager(localConfig *Config) (*NacosConfigManager, error) {
 	if strings.HasPrefix(localConfig.NacosUrl, "https://") {
 		slog.Info("检测到HTTPS连接，配置SSL设置", "skip_ssl_verify", localConfig.SkipSSLVerify)
 		
+		// 创建自定义的 HTTP 客户端配置
+		tlsConfig := &tls.Config{
+			InsecureSkipVerify: localConfig.SkipSSLVerify,
+		}
+		
+		// 为 Nacos SDK 配置自定义传输
+		customTransport := &http.Transport{
+			TLSClientConfig: tlsConfig,
+			// K8s 环境优化
+			MaxIdleConns:        10,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     30 * time.Second,
+		}
+		
+		// 设置全局默认传输（Nacos SDK 会使用）
+		http.DefaultTransport = customTransport
+		
 		if localConfig.SkipSSLVerify {
-			// 全局设置跳过 SSL 证书验证（用于开发/测试环境）
-			if transport, ok := http.DefaultTransport.(*http.Transport); ok {
-				if transport.TLSClientConfig == nil {
-					transport.TLSClientConfig = &tls.Config{}
-				}
-				transport.TLSClientConfig.InsecureSkipVerify = true
-				slog.Warn("已禁用SSL证书验证，仅适用于开发/测试环境")
-			}
+			slog.Warn("已禁用SSL证书验证，仅适用于开发/测试环境")
+		} else {
+			slog.Info("启用SSL证书验证")
 		}
 	}
 
@@ -127,16 +139,27 @@ func NewNacosConfigManager(localConfig *Config) (*NacosConfigManager, error) {
 		updateChan: make(chan *Config, 1),
 	}
 
-	// 尝试从Nacos加载配置，增加重试机制
-	maxRetries := 3
+	// 尝试从Nacos加载配置，增加重试机制（K8s环境优化）
+	maxRetries := 5  // K8s 环境增加重试次数
 	var lastErr error
 	
 	for i := 0; i < maxRetries; i++ {
 		if err := manager.loadConfigFromNacos(); err != nil {
 			lastErr = err
-			slog.Warn("从Nacos加载配置失败", "attempt", i+1, "max_retries", maxRetries, "error", err)
+			slog.Warn("从Nacos加载配置失败", 
+				"attempt", i+1, 
+				"max_retries", maxRetries, 
+				"error", err,
+				"nacos_url", localConfig.NacosUrl)
+			
 			if i < maxRetries-1 {
-				time.Sleep(time.Duration(i+1) * 2 * time.Second) // 递增延迟
+				// K8s 环境使用指数退避策略
+				backoffDelay := time.Duration(1<<uint(i)) * time.Second
+				if backoffDelay > 30*time.Second {
+					backoffDelay = 30 * time.Second
+				}
+				slog.Info("等待重试", "delay_seconds", backoffDelay.Seconds())
+				time.Sleep(backoffDelay)
 			}
 		} else {
 			slog.Info("成功从Nacos加载配置", "attempt", i+1)

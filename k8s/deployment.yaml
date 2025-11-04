@@ -1,0 +1,127 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: domain-exporter
+  namespace: monitoring
+  labels:
+    app: domain-exporter
+    version: v1.0.0
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: domain-exporter
+  template:
+    metadata:
+      labels:
+        app: domain-exporter
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: domain-exporter
+        image: ghcr.io/kevin197011/domain-exporter:latest
+        ports:
+        - containerPort: 8080
+          name: http-metrics
+        env:
+        - name: NACOS_URL
+          value: "https://infra-nacos.slileisure.com:443"
+        - name: NACOS_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: nacos-credentials
+              key: username
+        - name: NACOS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: nacos-credentials
+              key: password
+        - name: NACOS_NAMESPACE_ID
+          value: "devops"
+        - name: NACOS_DATA_ID
+          value: "domain-exporter"
+        - name: NACOS_GROUP
+          value: "DEFAULT_GROUP"
+        - name: NACOS_SKIP_SSL_VERIFY
+          value: "true"
+        - name: TZ
+          value: "UTC"
+        - name: LOG_LEVEL
+          value: "info"
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        livenessProbe:
+          httpGet:
+            path: /metrics
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /metrics
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1001
+          runAsGroup: 1001
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      securityContext:
+        fsGroup: 1001
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: domain-exporter
+  namespace: monitoring
+  labels:
+    app: domain-exporter
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+    prometheus.io/path: "/metrics"
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: http-metrics
+  selector:
+    app: domain-exporter
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: nacos-credentials
+  namespace: monitoring
+type: Opaque
+data:
+  # base64 encoded values
+  # echo -n "nacos" | base64
+  username: bmFjb3M=  # nacos
+  password: bmFjb3M=  # nacos
