@@ -2,10 +2,13 @@ name: Build and Push Docker Image
 
 on:
   push:
-    branches: [ main ]
-    tags: [ 'v*' ]
+    branches:
+      - main
+    tags:
+      - 'v*'
   pull_request:
-    branches: [ main ]
+    branches:
+      - main
 
 env:
   REGISTRY: ghcr.io
@@ -18,8 +21,6 @@ jobs:
       contents: read
       packages: write
       id-token: write
-      actions: read
-      security-events: write
 
     steps:
     - name: Checkout repository
@@ -40,6 +41,9 @@ jobs:
         go build -o domain-exporter .
         ./domain-exporter -help || true
 
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
     - name: Log in to Container Registry
       if: github.event_name != 'pull_request'
       uses: docker/login-action@v3
@@ -47,15 +51,6 @@ jobs:
         registry: ${{ env.REGISTRY }}
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Debug registry info
-      if: github.event_name != 'pull_request'
-      run: |
-        echo "Registry: ${{ env.REGISTRY }}"
-        echo "Image name: ${{ env.IMAGE_NAME }}"
-        echo "Actor: ${{ github.actor }}"
-        echo "Repository: ${{ github.repository }}"
-        echo "Repository owner: ${{ github.repository_owner }}"
 
     - name: Extract metadata
       id: meta
@@ -67,22 +62,25 @@ jobs:
           type=ref,event=pr
           type=semver,pattern={{version}}
           type=semver,pattern={{major}}.{{minor}}
+          type=semver,pattern={{major}}
           type=raw,value=latest,enable={{is_default_branch}}
 
     - name: Build and push Docker image
-      if: github.event_name != 'pull_request'
+      id: build
       uses: docker/build-push-action@v5
       with:
         context: .
-        push: true
+        platforms: linux/amd64,linux/arm64
+        push: ${{ github.event_name != 'pull_request' }}
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
 
-    - name: Build Docker image (PR)
-      if: github.event_name == 'pull_request'
-      uses: docker/build-push-action@v5
+    - name: Generate artifact attestation
+      if: github.event_name != 'pull_request'
+      uses: actions/attest-build-provenance@v1
       with:
-        context: .
-        push: false
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
+        subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        subject-digest: ${{ steps.build.outputs.digest }}
+        push-to-registry: true
