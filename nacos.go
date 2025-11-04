@@ -50,16 +50,21 @@ func NewNacosConfigManager(localConfig *Config) (*NacosConfigManager, error) {
 		},
 	}
 
-	// 构建客户端配置，使用默认值
+	// 构建客户端配置，针对Kubernetes环境优化
 	clientConfig := constant.ClientConfig{
 		NamespaceId:         localConfig.NamespaceId,
-		TimeoutMs:           10000, // 增加超时时间到10秒
-		NotLoadCacheAtStart: true,
-		LogDir:              "/tmp/nacos/log",
-		CacheDir:            "/tmp/nacos/cache",
-		LogLevel:            "debug", // 增加日志级别
+		TimeoutMs:           15000, // 增加超时时间到15秒
+		NotLoadCacheAtStart: true,  // 不从缓存启动，避免文件权限问题
+		LogDir:              "/app/logs/nacos",     // 使用应用目录
+		CacheDir:            "/app/cache/nacos",   // 使用应用目录
+		LogLevel:            "error",  // 进一步降低日志级别
 		Username:            localConfig.Username,
 		Password:            localConfig.Password,
+		// Kubernetes环境优化配置
+		UpdateThreadNum:      1,      // 减少线程数
+		UpdateCacheWhenEmpty: false,  // 空配置时不更新缓存
+		// 禁用一些可能导致问题的功能
+		OpenKMS:             false,   // 禁用KMS
 	}
 	
 	slog.Info("Nacos客户端配置", 
@@ -95,12 +100,27 @@ func NewNacosConfigManager(localConfig *Config) (*NacosConfigManager, error) {
 		updateChan: make(chan *Config, 1),
 	}
 
-	// 尝试从Nacos加载配置，如果失败则保持使用本地配置
-	if err := manager.loadConfigFromNacos(); err != nil {
-		slog.Warn("从Nacos加载配置失败，将使用本地配置", "error", err)
+	// 尝试从Nacos加载配置，增加重试机制
+	maxRetries := 3
+	var lastErr error
+	
+	for i := 0; i < maxRetries; i++ {
+		if err := manager.loadConfigFromNacos(); err != nil {
+			lastErr = err
+			slog.Warn("从Nacos加载配置失败", "attempt", i+1, "max_retries", maxRetries, "error", err)
+			if i < maxRetries-1 {
+				time.Sleep(time.Duration(i+1) * 2 * time.Second) // 递增延迟
+			}
+		} else {
+			slog.Info("成功从Nacos加载配置", "attempt", i+1)
+			lastErr = nil
+			break
+		}
+	}
+	
+	if lastErr != nil {
+		slog.Warn("多次尝试后仍无法从Nacos加载配置，将使用本地配置", "error", lastErr)
 		// 不返回错误，继续使用本地配置
-	} else {
-		slog.Info("成功从Nacos加载配置")
 	}
 
 	// 监听配置变化
