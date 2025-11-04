@@ -3,10 +3,12 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -14,25 +16,58 @@ import (
 )
 
 var (
-	configFile = flag.String("config", "config.yml", "配置文件路径")
-	port       = flag.String("port", "8080", "HTTP服务端口")
+	configFile = flag.String("config", "", "配置文件路径（可选，优先使用环境变量）")
+	port       = flag.String("port", "", "HTTP服务端口（可选，优先使用环境变量）")
 )
 
 func main() {
 	flag.Parse()
 
-	// 初始化结构化日志
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
-	slog.SetDefault(logger)
-
 	// 加载配置
 	config, err := LoadConfig(*configFile)
 	if err != nil {
-		slog.Error("加载配置文件失败", "error", err)
-		os.Exit(1)
+		log.Fatalf("加载配置文件失败: %v", err)
 	}
+
+	// 根据配置设置日志级别
+	logLevel := slog.LevelInfo
+	switch strings.ToLower(config.LogLevel) {
+	case "debug":
+		logLevel = slog.LevelDebug
+	case "warn", "warning":
+		logLevel = slog.LevelWarn
+	case "error":
+		logLevel = slog.LevelError
+	default:
+		logLevel = slog.LevelInfo
+	}
+	
+	// 环境变量可以覆盖配置文件
+	if envLogLevel := os.Getenv("LOG_LEVEL"); envLogLevel != "" {
+		switch strings.ToLower(envLogLevel) {
+		case "debug":
+			logLevel = slog.LevelDebug
+		case "warn", "warning":
+			logLevel = slog.LevelWarn
+		case "error":
+			logLevel = slog.LevelError
+		default:
+			logLevel = slog.LevelInfo
+		}
+	}
+	
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: logLevel,
+	}))
+	slog.SetDefault(logger)
+
+	// 打印配置信息用于调试
+	slog.Info("配置加载完成", 
+		"domains", len(config.Domains),
+		"check_interval", config.CheckInterval,
+		"port", config.Port,
+		"timeout", config.Timeout,
+		"nacos_enabled", config.IsNacosEnabled())
 
 	// 创建exporter
 	exporter, err := NewDomainExporter(config)
@@ -58,6 +93,39 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, `{"status": "triggered", "message": "域名检查已触发"}`)
 	})
+	http.HandleFunc("/config", func(w http.ResponseWriter, r *http.Request) {
+		currentConfig := exporter.getCurrentConfig()
+		w.Header().Set("Content-Type", "application/json")
+		
+		// 构建详细的配置信息
+		domainsJson := "["
+		for i, domain := range currentConfig.Domains {
+			if i > 0 {
+				domainsJson += ","
+			}
+			domainsJson += fmt.Sprintf(`"%s"`, domain)
+		}
+		domainsJson += "]"
+		
+		fmt.Fprintf(w, `{
+			"domains": %s,
+			"domain_count": %d,
+			"check_interval": %d,
+			"port": %d,
+			"log_level": "%s",
+			"timeout": %d,
+			"detection_method": "whois",
+			"execution_mode": "serial",
+			"nacos_enabled": %t,
+			"nacos_url": "%s",
+			"nacos_namespace": "%s",
+			"nacos_data_id": "%s",
+			"nacos_group": "%s"
+		}`, domainsJson, len(currentConfig.Domains), currentConfig.CheckInterval, currentConfig.Port,
+			currentConfig.LogLevel, currentConfig.Timeout,
+			currentConfig.IsNacosEnabled(),
+			currentConfig.NacosUrl, currentConfig.NamespaceId, currentConfig.DataId, currentConfig.Group)
+	})
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		fmt.Fprintf(w, `
@@ -82,8 +150,12 @@ func main() {
 
 	// 启动HTTP服务
 	serverPort := *port
-	if config.Port != 0 {
-		serverPort = fmt.Sprintf("%d", config.Port)
+	if serverPort == "" {
+		if config.Port != 0 {
+			serverPort = fmt.Sprintf("%d", config.Port)
+		} else {
+			serverPort = "8080" // 默认端口
+		}
 	}
 
 	slog.Info("启动HTTP服务", "port", serverPort)

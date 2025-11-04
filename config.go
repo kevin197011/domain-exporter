@@ -2,6 +2,7 @@ package main
 
 import (
 	"io/ioutil"
+	"os"
 	"strconv"
 	"strings"
 	"gopkg.in/yaml.v2"
@@ -14,10 +15,7 @@ type Config struct {
 	CheckInterval     int      `yaml:"check_interval"`
 	Port              int      `yaml:"port"`
 	LogLevel          string   `yaml:"log_level"`
-	MaxConcurrent     int      `yaml:"max_concurrent"`
 	Timeout           int      `yaml:"timeout"`
-	DetectionMethods  []string `yaml:"detection_methods"`
-	WhoisServers      []string `yaml:"whois_servers"`
 	
 	// Nacos连接配置（从本地配置文件获取）
 	NacosUrl      string `yaml:"nacos_url"`
@@ -28,58 +26,26 @@ type Config struct {
 	Group         string `yaml:"group"`
 }
 
-// LoadConfig 加载配置文件
+// LoadConfig 加载配置（优先使用环境变量，然后是配置文件）
 func LoadConfig(filename string) (*Config, error) {
-	data, err := ioutil.ReadFile(filename)
-	if err != nil {
-		return nil, err
-	}
-
 	var config Config
-	err = yaml.Unmarshal(data, &config)
-	if err != nil {
-		return nil, err
-	}
-
-	// 设置默认值
-	if config.CheckInterval == 0 {
-		config.CheckInterval = 3600 // 默认1小时
-	}
-	if config.Port == 0 {
-		config.Port = 8080
-	}
-	if config.LogLevel == "" {
-		config.LogLevel = "info"
-	}
-	if config.MaxConcurrent == 0 {
-		config.MaxConcurrent = 5 // 默认并发数5
-	}
-	if config.Timeout == 0 {
-		config.Timeout = 30 // 默认超时30秒
-	}
-	if len(config.DetectionMethods) == 0 {
-		config.DetectionMethods = []string{"whois"} // 默认检测方法
-	}
-	if len(config.WhoisServers) == 0 {
-		config.WhoisServers = []string{
-			"whois.verisign-grs.com",
-			"whois.internic.net", 
-			"whois.iana.org",
-			"whois.publicinterestregistry.net",
-			"whois.afilias.net",
+	
+	// 首先尝试从环境变量加载
+	loadFromEnv(&config)
+	
+	// 如果配置文件存在，则加载并合并（环境变量优先）
+	if filename != "" {
+		if data, err := ioutil.ReadFile(filename); err == nil {
+			var fileConfig Config
+			if err := yaml.Unmarshal(data, &fileConfig); err == nil {
+				// 合并配置，环境变量优先
+				mergeConfig(&config, &fileConfig)
+			}
 		}
 	}
-	
-	// 设置Nacos默认值
-	if config.DataId == "" {
-		config.DataId = "domain-exporter"
-	}
-	if config.Group == "" {
-		config.Group = "DEFAULT_GROUP"
-	}
-	if config.NamespaceId == "" {
-		config.NamespaceId = "public"
-	}
+
+	// 应用默认值
+	applyDefaults(&config)
 
 	return &config, nil
 }
@@ -142,4 +108,128 @@ func (c *Config) GetNacosServerPort() uint64 {
 	}
 	
 	return 8848
+}
+
+// loadFromEnv 从环境变量加载配置
+func loadFromEnv(config *Config) {
+	// Nacos配置
+	if val := os.Getenv("NACOS_URL"); val != "" {
+		config.NacosUrl = val
+	}
+	if val := os.Getenv("NACOS_USERNAME"); val != "" {
+		config.Username = val
+	}
+	if val := os.Getenv("NACOS_PASSWORD"); val != "" {
+		config.Password = val
+	}
+	if val := os.Getenv("NACOS_NAMESPACE_ID"); val != "" {
+		config.NamespaceId = val
+	}
+	if val := os.Getenv("NACOS_DATA_ID"); val != "" {
+		config.DataId = val
+	}
+	if val := os.Getenv("NACOS_GROUP"); val != "" {
+		config.Group = val
+	}
+	
+	// 业务配置
+	if val := os.Getenv("DOMAINS"); val != "" {
+		config.Domains = strings.Split(val, ",")
+		// 清理空白字符
+		for i, domain := range config.Domains {
+			config.Domains[i] = strings.TrimSpace(domain)
+		}
+	}
+	if val := os.Getenv("CHECK_INTERVAL"); val != "" {
+		if interval, err := strconv.Atoi(val); err == nil {
+			config.CheckInterval = interval
+		}
+	}
+	if val := os.Getenv("PORT"); val != "" {
+		if port, err := strconv.Atoi(val); err == nil {
+			config.Port = port
+		}
+	}
+	if val := os.Getenv("LOG_LEVEL"); val != "" {
+		config.LogLevel = val
+	}
+
+	if val := os.Getenv("TIMEOUT"); val != "" {
+		if timeout, err := strconv.Atoi(val); err == nil {
+			config.Timeout = timeout
+		}
+	}
+
+
+}
+
+// mergeConfig 合并配置，env配置优先
+func mergeConfig(envConfig, fileConfig *Config) {
+	// 只有当环境变量未设置时，才使用文件配置
+	if envConfig.NacosUrl == "" {
+		envConfig.NacosUrl = fileConfig.NacosUrl
+	}
+	if envConfig.Username == "" {
+		envConfig.Username = fileConfig.Username
+	}
+	if envConfig.Password == "" {
+		envConfig.Password = fileConfig.Password
+	}
+	if envConfig.NamespaceId == "" {
+		envConfig.NamespaceId = fileConfig.NamespaceId
+	}
+	if envConfig.DataId == "" {
+		envConfig.DataId = fileConfig.DataId
+	}
+	if envConfig.Group == "" {
+		envConfig.Group = fileConfig.Group
+	}
+	
+	// 业务配置
+	if len(envConfig.Domains) == 0 {
+		envConfig.Domains = fileConfig.Domains
+	}
+	if envConfig.CheckInterval == 0 {
+		envConfig.CheckInterval = fileConfig.CheckInterval
+	}
+	if envConfig.Port == 0 {
+		envConfig.Port = fileConfig.Port
+	}
+	if envConfig.LogLevel == "" {
+		envConfig.LogLevel = fileConfig.LogLevel
+	}
+
+	if envConfig.Timeout == 0 {
+		envConfig.Timeout = fileConfig.Timeout
+	}
+
+}
+
+// applyDefaults 应用默认值配置
+func applyDefaults(config *Config) {
+	// 业务配置默认值
+	if config.CheckInterval == 0 {
+		config.CheckInterval = 3600 // 默认1小时
+	}
+	if config.Port == 0 {
+		config.Port = 8080
+	}
+	if config.LogLevel == "" {
+		config.LogLevel = "info"
+	}
+
+	if config.Timeout == 0 {
+		config.Timeout = 30 // 默认超时30秒
+	}
+	
+	// Nacos连接配置默认值
+	if config.DataId == "" {
+		config.DataId = "domain-exporter"
+	}
+	if config.Group == "" {
+		config.Group = "DEFAULT_GROUP"
+	}
+	if config.NamespaceId == "" {
+		config.NamespaceId = "public"
+	}
 }

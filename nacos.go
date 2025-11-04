@@ -105,16 +105,24 @@ func (m *NacosConfigManager) loadConfigFromNacos() error {
 	nacosConfig.DataId = m.config.DataId
 	nacosConfig.Group = m.config.Group
 
+	// 应用默认值（只对未设置的值）
+	applyDefaults(&nacosConfig)
+
 	m.configMutex.Lock()
 	m.config = &nacosConfig
 	m.configMutex.Unlock()
 
-	slog.Info("从Nacos成功加载配置", "domain_count", len(nacosConfig.Domains))
+	slog.Info("从Nacos成功加载配置", 
+		"domain_count", len(nacosConfig.Domains),
+		"check_interval", nacosConfig.CheckInterval,
+		"timeout", nacosConfig.Timeout)
 
 	// 通知配置更新
 	select {
 	case m.updateChan <- &nacosConfig:
+		slog.Debug("已发送配置更新通知")
 	default:
+		slog.Warn("配置更新通道已满，跳过通知")
 	}
 
 	return nil
@@ -147,6 +155,9 @@ func (m *NacosConfigManager) watchConfig() {
 			newConfig.DataId = m.config.DataId
 			newConfig.Group = m.config.Group
 
+			// 应用默认值（只对未设置的值）
+			applyDefaults(&newConfig)
+
 			m.configMutex.Lock()
 			oldDomainCount := len(m.config.Domains)
 			m.config = &newConfig
@@ -154,12 +165,16 @@ func (m *NacosConfigManager) watchConfig() {
 
 			slog.Info("Nacos配置已更新", 
 				"old_domain_count", oldDomainCount, 
-				"new_domain_count", len(newConfig.Domains))
+				"new_domain_count", len(newConfig.Domains),
+				"check_interval", newConfig.CheckInterval,
+				"timeout", newConfig.Timeout)
 
 			// 通知配置更新
 			select {
 			case m.updateChan <- &newConfig:
+				slog.Info("已发送Nacos配置变更通知")
 			default:
+				slog.Warn("配置更新通道已满，跳过通知")
 			}
 		},
 	})

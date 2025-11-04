@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net"
+	"regexp"
 	"strings"
 	"time"
 
@@ -23,6 +23,8 @@ type DomainInfo struct {
 
 // GetDomainInfo 获取域名信息
 func GetDomainInfo(domain string, timeout time.Duration) (*DomainInfo, error) {
+	slog.Debug("开始标准WHOIS查询", "domain", domain, "timeout", timeout)
+	
 	// 创建带超时的context
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -37,7 +39,13 @@ func GetDomainInfo(domain string, timeout time.Duration) (*DomainInfo, error) {
 	
 	// 在goroutine中执行whois查询
 	go func() {
+		slog.Debug("执行WHOIS查询", "domain", domain)
 		data, err := whois.Whois(domain)
+		if err != nil {
+			slog.Debug("WHOIS查询失败", "domain", domain, "error", err)
+		} else {
+			slog.Debug("WHOIS查询成功", "domain", domain, "data_length", len(data))
+		}
 		resultChan <- result{data: data, err: err}
 	}()
 
@@ -49,20 +57,49 @@ func GetDomainInfo(domain string, timeout time.Duration) (*DomainInfo, error) {
 		}
 		return parseDomainInfo(domain, res.data)
 	case <-ctx.Done():
+		slog.Debug("WHOIS查询超时", "domain", domain, "timeout", timeout)
 		return nil, fmt.Errorf("whois查询超时: %v", ctx.Err())
 	}
 }
 
 // parseDomainInfo 解析域名信息
 func parseDomainInfo(domain, whoisData string) (*DomainInfo, error) {
+	slog.Debug("开始解析WHOIS数据", "domain", domain, "data_length", len(whoisData))
+	
+	// 打印WHOIS原始数据的前500字符用于调试
+	if len(whoisData) > 0 {
+		preview := whoisData
+		if len(preview) > 500 {
+			preview = preview[:500] + "..."
+		}
+		slog.Debug("WHOIS原始数据预览", "domain", domain, "data", preview)
+	}
 
 	// 解析whois信息
 	parsed, err := whoisparser.Parse(whoisData)
 	if err != nil {
+		slog.Error("WHOIS解析失败", "domain", domain, "error", err, "raw_data_length", len(whoisData))
 		return nil, fmt.Errorf("whois解析失败: %v", err)
+	}
+	
+	slog.Debug("WHOIS解析成功", "domain", domain, 
+		"registrar", parsed.Registrar.Name,
+		"expiration_date", parsed.Domain.ExpirationDate,
+		"status_count", len(parsed.Domain.Status))
+
+	// 检查解析结果
+	if parsed.Domain.ExpirationDate == "" {
+		slog.Error("WHOIS解析结果中没有过期时间", "domain", domain, 
+			"registrar", parsed.Registrar.Name,
+			"domain_name", parsed.Domain.Name)
+		
+		// 尝试从原始数据中手动提取过期时间
+		return parseExpirationFromRawData(domain, whoisData)
 	}
 
 	// 解析过期时间
+	slog.Debug("尝试解析过期时间", "domain", domain, "expiration_date", parsed.Domain.ExpirationDate)
+	
 	expiryDate, err := time.Parse("2006-01-02T15:04:05Z", parsed.Domain.ExpirationDate)
 	if err != nil {
 		// 尝试其他时间格式
@@ -71,16 +108,22 @@ func parseDomainInfo(domain, whoisData string) (*DomainInfo, error) {
 			"2006-01-02",
 			"02-Jan-2006",
 			"2006/01/02",
+			"2006-01-02T15:04:05.000Z",
+			"Mon Jan 02 15:04:05 MST 2006",
+			"January 02 2006",
 		}
 		
 		for _, format := range formats {
 			if expiryDate, err = time.Parse(format, parsed.Domain.ExpirationDate); err == nil {
+				slog.Debug("成功解析过期时间", "domain", domain, "format", format, "date", expiryDate)
 				break
 			}
 		}
 		
 		if err != nil {
-			return nil, fmt.Errorf("无法解析过期时间: %s", parsed.Domain.ExpirationDate)
+			slog.Error("无法解析过期时间", "domain", domain, "expiration_date", parsed.Domain.ExpirationDate, "error", err)
+			// 尝试从原始数据中手动提取
+			return parseExpirationFromRawData(domain, whoisData)
 		}
 	}
 
@@ -101,163 +144,156 @@ func parseDomainInfo(domain, whoisData string) (*DomainInfo, error) {
 	}, nil
 }
 
-// GetDomainInfoWithFallback 使用WHOIS和备用服务器获取域名信息
+// GetDomainInfoWithFallback 使用WHOIS获取域名信息（带重试）
 func GetDomainInfoWithFallback(domain string, timeout time.Duration, config *Config) (*DomainInfo, error) {
-	return GetDomainInfoWithSmartFallback(domain, timeout, config)
-}
-
-// GetDomainInfoWithBackupServers 使用备用WHOIS服务器
-func GetDomainInfoWithBackupServers(domain string, timeout time.Duration, servers []string) (*DomainInfo, error) {
+	maxRetries := 2
 	var lastErr error
 	
-	for i, server := range servers {
-		log.Printf("尝试备用WHOIS服务器 %d/%d: %s", i+1, len(servers), server)
-		info, err := queryWhoisServer(domain, server, timeout)
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		slog.Debug("WHOIS查询尝试", "domain", domain, "attempt", attempt, "max_retries", maxRetries)
+		
+		info, err := GetDomainInfo(domain, timeout)
 		if err == nil {
-			log.Printf("备用服务器 %s 查询成功", server)
+			if attempt > 1 {
+				slog.Info("WHOIS查询重试成功", "domain", domain, "attempt", attempt)
+			}
 			return info, nil
 		}
-		log.Printf("备用服务器 %s 查询失败: %v", server, err)
+		
 		lastErr = err
+		slog.Debug("WHOIS查询失败", "domain", domain, "attempt", attempt, "error", err)
+		
+		// 如果不是最后一次尝试，等待一下再重试
+		if attempt < maxRetries {
+			waitTime := time.Duration(attempt) * time.Second
+			slog.Debug("等待重试", "domain", domain, "wait_seconds", waitTime.Seconds())
+			time.Sleep(waitTime)
+		}
 	}
-	return nil, fmt.Errorf("所有备用WHOIS服务器都无法访问，最后错误: %v", lastErr)
+	
+	slog.Error("所有WHOIS查询尝试都失败了", "domain", domain, "attempts", maxRetries, "last_error", lastErr)
+	return nil, fmt.Errorf("WHOIS查询失败: %v", lastErr)
 }
 
-// queryWhoisServer 查询指定的WHOIS服务器
-func queryWhoisServer(domain, server string, timeout time.Duration) (*DomainInfo, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
+
+
+
+
+
+
+
+
+// parseExpirationFromRawData 从原始WHOIS数据中手动提取过期时间
+func parseExpirationFromRawData(domain, whoisData string) (*DomainInfo, error) {
+	slog.Debug("尝试从原始数据手动解析过期时间", "domain", domain)
 	
-	// 连接到WHOIS服务器
-	conn, err := net.DialTimeout("tcp", server+":43", timeout/2) // 连接超时设为总超时的一半
-	if err != nil {
-		return nil, fmt.Errorf("连接WHOIS服务器 %s 失败: %v", server, err)
+	// 常见的过期时间字段名
+	expirationPatterns := []string{
+		`(?i)Registry Expiry Date:\s*(.+)`,
+		`(?i)Registrar Registration Expiration Date:\s*(.+)`,
+		`(?i)Expiry Date:\s*(.+)`,
+		`(?i)Expiration Date:\s*(.+)`,
+		`(?i)Expires:\s*(.+)`,
+		`(?i)Expire:\s*(.+)`,
+		`(?i)Expiration Time:\s*(.+)`,
+		`(?i)Registry Expiration Date:\s*(.+)`,
+		`(?i)Domain Expiration Date:\s*(.+)`,
+		`(?i)Paid-till:\s*(.+)`,
 	}
-	defer conn.Close()
 	
-	// 发送查询
-	_, err = conn.Write([]byte(domain + "\r\n"))
-	if err != nil {
-		return nil, fmt.Errorf("向服务器 %s 发送查询失败: %v", server, err)
+	// 常见的注册商字段名
+	registrarPatterns := []string{
+		`(?i)Registrar:\s*(.+)`,
+		`(?i)Sponsoring Registrar:\s*(.+)`,
+		`(?i)Registrar Name:\s*(.+)`,
 	}
 	
-	// 读取响应
-	buffer := make([]byte, 8192) // 增加缓冲区大小
-	var response strings.Builder
-	readTimeout := time.Second * 3 // 读取超时
+	var expiryDate time.Time
+	var registrar string
+	var found bool
 	
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, fmt.Errorf("从服务器 %s 查询超时", server)
-		default:
-			conn.SetReadDeadline(time.Now().Add(readTimeout))
-			n, err := conn.Read(buffer)
-			if err != nil {
-				if n == 0 {
-					// 读取完成
-					break
-				}
-				// 检查是否是超时错误
-				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-					// 如果已经读取到一些数据，继续处理
-					if response.Len() > 0 {
-						break
-					}
-				}
-				return nil, fmt.Errorf("从服务器 %s 读取响应失败: %v", server, err)
-			}
-			response.Write(buffer[:n])
-			if n < len(buffer) {
+	// 尝试提取过期时间
+	for _, pattern := range expirationPatterns {
+		re := regexp.MustCompile(pattern)
+		matches := re.FindStringSubmatch(whoisData)
+		if len(matches) > 1 {
+			dateStr := strings.TrimSpace(matches[1])
+			slog.Debug("找到过期时间字段", "domain", domain, "pattern", pattern, "date_str", dateStr)
+			
+			// 尝试解析日期
+			if parsedDate, err := parseFlexibleDate(dateStr); err == nil {
+				expiryDate = parsedDate
+				found = true
+				slog.Debug("成功解析过期时间", "domain", domain, "date", expiryDate)
 				break
+			} else {
+				slog.Debug("解析日期失败", "domain", domain, "date_str", dateStr, "error", err)
 			}
 		}
 	}
 	
-	responseData := response.String()
-	if len(responseData) == 0 {
-		return nil, fmt.Errorf("从服务器 %s 获得空响应", server)
+	if !found {
+		return nil, fmt.Errorf("无法从原始数据中提取过期时间")
 	}
 	
-	// 解析响应
-	info, err := parseDomainInfo(domain, responseData)
-	if err != nil {
-		return nil, fmt.Errorf("解析服务器 %s 响应失败: %v", server, err)
+	// 尝试提取注册商
+	for _, pattern := range registrarPatterns {
+		re := regexp.MustCompile(pattern)
+		matches := re.FindStringSubmatch(whoisData)
+		if len(matches) > 1 {
+			registrar = strings.TrimSpace(matches[1])
+			break
+		}
 	}
 	
-	// 标记使用的服务器
-	info.Method = fmt.Sprintf("whois(%s)", server)
+	if registrar == "" {
+		registrar = "Unknown"
+	}
 	
-	return info, nil
+	return &DomainInfo{
+		Domain:     domain,
+		ExpiryDate: expiryDate,
+		Registrar:  registrar,
+		Status:     "active",
+		Method:     "whois(manual_parse)",
+	}, nil
 }
 
-// getPreferredWhoisServers 根据域名后缀获取首选的WHOIS服务器
-func getPreferredWhoisServers(domain string) []string {
-	// 提取域名后缀
-	parts := strings.Split(domain, ".")
-	if len(parts) < 2 {
-		return []string{}
+// parseFlexibleDate 灵活解析各种日期格式
+func parseFlexibleDate(dateStr string) (time.Time, error) {
+	// 清理日期字符串
+	dateStr = strings.TrimSpace(dateStr)
+	
+	// 移除常见的后缀
+	dateStr = regexp.MustCompile(`\s+UTC$`).ReplaceAllString(dateStr, "")
+	dateStr = regexp.MustCompile(`\s+GMT$`).ReplaceAllString(dateStr, "")
+	dateStr = regexp.MustCompile(`\s+\+\d{4}$`).ReplaceAllString(dateStr, "")
+	
+	// 尝试各种日期格式
+	formats := []string{
+		"2006-01-02T15:04:05Z",
+		"2006-01-02T15:04:05.000Z",
+		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05",
+		"2006-01-02",
+		"02-Jan-2006",
+		"2006/01/02",
+		"01/02/2006",
+		"2006.01.02",
+		"January 02 2006",
+		"Jan 02 2006",
+		"02 Jan 2006",
+		"2006-01-02 15:04:05 UTC",
+		"Mon Jan 02 15:04:05 MST 2006",
+		"2006-01-02T15:04:05-07:00",
+		"2006-01-02T15:04:05+00:00",
 	}
 	
-	tld := strings.ToLower(parts[len(parts)-1])
-	
-	// 根据TLD返回首选服务器
-	switch tld {
-	case "com", "net":
-		return []string{"whois.verisign-grs.com"}
-	case "org":
-		return []string{"whois.publicinterestregistry.net"}
-	case "info":
-		return []string{"whois.afilias.net"}
-	case "biz":
-		return []string{"whois.neulevel.biz"}
-	case "us":
-		return []string{"whois.nic.us"}
-	case "uk":
-		return []string{"whois.nominet.uk"}
-	case "de":
-		return []string{"whois.denic.de"}
-	case "fr":
-		return []string{"whois.afnic.fr"}
-	case "jp":
-		return []string{"whois.jprs.jp"}
-	case "cn":
-		return []string{"whois.cnnic.cn"}
-	default:
-		return []string{}
-	}
-}
-
-// GetDomainInfoWithSmartFallback 使用智能备用服务器获取域名信息
-func GetDomainInfoWithSmartFallback(domain string, timeout time.Duration, config *Config) (*DomainInfo, error) {
-	// 首先尝试标准WHOIS查询
-	info, err := GetDomainInfo(domain, timeout)
-	if err == nil {
-		return info, nil
-	}
-	
-	log.Printf("标准WHOIS查询失败: %v，尝试智能备用服务器", err)
-	
-	// 获取针对该域名的首选服务器
-	preferredServers := getPreferredWhoisServers(domain)
-	if len(preferredServers) > 0 {
-		log.Printf("尝试针对域名 %s 的首选服务器", domain)
-		info, err = GetDomainInfoWithBackupServers(domain, timeout, preferredServers)
-		if err == nil {
-			return info, nil
+	for _, format := range formats {
+		if date, err := time.Parse(format, dateStr); err == nil {
+			return date, nil
 		}
-		log.Printf("首选服务器查询失败: %v", err)
 	}
 	
-	// 如果首选服务器失败，尝试通用备用服务器
-	if len(config.WhoisServers) > 0 {
-		log.Printf("尝试通用备用服务器")
-		info, err = GetDomainInfoWithBackupServers(domain, timeout, config.WhoisServers)
-		if err == nil {
-			return info, nil
-		}
-		log.Printf("通用备用服务器查询失败: %v", err)
-	}
-	
-	return nil, fmt.Errorf("所有WHOIS查询方法都失败了")
+	return time.Time{}, fmt.Errorf("无法解析日期格式: %s", dateStr)
 }

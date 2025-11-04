@@ -15,6 +15,7 @@ type DomainExporter struct {
 	nacosManager *NacosConfigManager
 	stopChan    chan struct{}
 	triggerChan chan struct{} // 用于触发立即检查
+	initialCheckDone bool      // 标记是否已完成初始检查
 
 	// Prometheus指标
 	domainExpiryDays *prometheus.GaugeVec
@@ -58,7 +59,7 @@ func NewDomainExporter(localConfig *Config) (*DomainExporter, error) {
 		domainExpiryDays: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Name: "domain_expiry_days",
-				Help: "域名距离过期的天数",
+				Help: "域名距离过期的天数 (-999表示检测失败)",
 			},
 			[]string{"domain"},
 		),
@@ -116,21 +117,47 @@ func (e *DomainExporter) Collect(ch chan<- prometheus.Metric) {
 func (e *DomainExporter) StartMonitoring() {
 	// 立即执行一次检查
 	e.checkAllDomains()
+	e.initialCheckDone = true
 
-	// 定时检查
-	ticker := time.NewTicker(time.Duration(e.getCurrentConfig().CheckInterval) * time.Second)
+	// 获取初始检查间隔
+	currentInterval := time.Duration(e.getCurrentConfig().CheckInterval) * time.Second
+	ticker := time.NewTicker(currentInterval)
 	defer ticker.Stop()
+
+	slog.Info("启动定时监控", "check_interval_seconds", e.getCurrentConfig().CheckInterval)
 
 	for {
 		select {
 		case <-ticker.C:
+			slog.Debug("定时器触发，开始检查域名")
 			e.checkAllDomains()
+			
+			// 检查配置是否变化，如果变化则重置定时器
+			newInterval := time.Duration(e.getCurrentConfig().CheckInterval) * time.Second
+			if newInterval != currentInterval {
+				slog.Info("检查间隔已更新", 
+					"old_interval_seconds", int(currentInterval.Seconds()),
+					"new_interval_seconds", int(newInterval.Seconds()))
+				currentInterval = newInterval
+				ticker.Reset(currentInterval)
+			}
+			
 		case <-e.triggerChan:
 			slog.Info("收到配置变更触发信号，立即执行域名检查")
 			e.checkAllDomains()
-			// 重置定时器，避免频繁检查
-			ticker.Reset(time.Duration(e.getCurrentConfig().CheckInterval) * time.Second)
+			
+			// 重置定时器，使用最新的检查间隔
+			newInterval := time.Duration(e.getCurrentConfig().CheckInterval) * time.Second
+			if newInterval != currentInterval {
+				slog.Info("配置变更后更新检查间隔", 
+					"old_interval_seconds", int(currentInterval.Seconds()),
+					"new_interval_seconds", int(newInterval.Seconds()))
+				currentInterval = newInterval
+			}
+			ticker.Reset(currentInterval)
+			
 		case <-e.stopChan:
+			slog.Info("停止定时监控")
 			return
 		}
 	}
@@ -148,31 +175,24 @@ func (e *DomainExporter) watchConfigUpdates() {
 		case newConfig := <-updateChan:
 			if newConfig != nil {
 				e.mutex.Lock()
-				oldDomainCount := len(e.config.Domains)
-				oldDomains := make([]string, len(e.config.Domains))
-				copy(oldDomains, e.config.Domains)
-				
+				oldConfig := *e.config // 复制旧配置
 				e.config = newConfig
-				newDomainCount := len(newConfig.Domains)
+				initialCheckDone := e.initialCheckDone
 				e.mutex.Unlock()
 				
-				slog.Info("Nacos配置已更新", 
-					"old_domain_count", oldDomainCount, 
-					"new_domain_count", newDomainCount)
+				// 详细记录所有配置变化
+				e.logConfigChanges(&oldConfig, newConfig)
 				
-				// 检查域名列表是否有变化
-				domainsChanged := e.checkDomainsChanged(oldDomains, newConfig.Domains)
-				if domainsChanged {
-					slog.Info("检测到域名列表变化，立即触发检查")
+				// 只有在初始检查完成后才触发配置变更检查，避免启动时重复检查
+				if initialCheckDone {
+					select {
+					case e.triggerChan <- struct{}{}:
+						slog.Info("已发送配置变更触发信号")
+					default:
+						slog.Warn("触发通道已满，跳过此次触发信号")
+					}
 				} else {
-					slog.Info("域名列表未变化，但其他配置可能已更新，立即触发检查")
-				}
-				
-				// 触发立即检查
-				select {
-				case e.triggerChan <- struct{}{}:
-				default:
-					// 如果通道已满，说明已经有待处理的触发信号，跳过
+					slog.Debug("跳过启动时的配置变更触发，避免重复检查")
 				}
 			}
 		case <-e.stopChan:
@@ -181,27 +201,7 @@ func (e *DomainExporter) watchConfigUpdates() {
 	}
 }
 
-// checkDomainsChanged 检查域名列表是否有变化
-func (e *DomainExporter) checkDomainsChanged(oldDomains, newDomains []string) bool {
-	if len(oldDomains) != len(newDomains) {
-		return true
-	}
-	
-	// 创建map用于快速查找
-	oldMap := make(map[string]bool)
-	for _, domain := range oldDomains {
-		oldMap[domain] = true
-	}
-	
-	// 检查新域名列表中是否有不在旧列表中的域名
-	for _, domain := range newDomains {
-		if !oldMap[domain] {
-			return true
-		}
-	}
-	
-	return false
-}
+
 
 // getCurrentConfig 获取当前配置
 func (e *DomainExporter) getCurrentConfig() *Config {
@@ -228,31 +228,22 @@ func (e *DomainExporter) TriggerCheck() {
 	}
 }
 
-// checkAllDomains 检查所有域名
+// checkAllDomains 检查所有域名（串行执行）
 func (e *DomainExporter) checkAllDomains() {
 	currentConfig := e.getCurrentConfig()
-	slog.Info("开始检查域名", 
-		"domain_count", len(currentConfig.Domains), 
-		"max_concurrent", currentConfig.MaxConcurrent)
+	slog.Info("开始串行检查域名", "domain_count", len(currentConfig.Domains))
 
-	// 创建信号量控制并发数
-	semaphore := make(chan struct{}, currentConfig.MaxConcurrent)
-	var wg sync.WaitGroup
-
-	for _, domain := range currentConfig.Domains {
-		wg.Add(1)
-		go func(d string) {
-			defer wg.Done()
-			// 获取信号量
-			semaphore <- struct{}{}
-			defer func() { <-semaphore }()
-			
-			e.checkDomain(d)
-		}(domain)
+	// 串行检查每个域名
+	for i, domain := range currentConfig.Domains {
+		slog.Debug("检查进度", "current", i+1, "total", len(currentConfig.Domains), "domain", domain)
+		e.checkDomain(domain)
+		
+		// 在域名之间添加短暂延迟，避免对WHOIS服务器造成压力
+		if i < len(currentConfig.Domains)-1 {
+			time.Sleep(time.Second * 1)
+		}
 	}
 
-	// 等待所有检查完成
-	wg.Wait()
 	slog.Info("所有域名检查完成")
 }
 
@@ -273,6 +264,10 @@ func (e *DomainExporter) checkDomain(domain string) {
 	if err != nil {
 		slog.Error("获取域名信息失败", "domain", domain, "error", err)
 		e.domainStatus.WithLabelValues(domain).Set(0)
+		// 设置失败标记：-999天表示检测失败
+		e.domainExpiryDays.WithLabelValues(domain).Set(-999)
+		// 设置过期时间戳为0表示未知
+		e.domainExpiryTime.WithLabelValues(domain).Set(0)
 		return
 	}
 
@@ -292,4 +287,87 @@ func (e *DomainExporter) checkDomain(domain string) {
 		"days_until_expiry", int(daysUntilExpiryInt),
 		"expiry_date", domainInfo.ExpiryDate.Format("2006-01-02"),
 		"method", domainInfo.Method)
+}
+
+// logConfigChanges 记录配置变化的详细信息
+func (e *DomainExporter) logConfigChanges(oldConfig, newConfig *Config) {
+	changes := make(map[string]interface{})
+	
+	// 检查域名列表变化
+	if !equalStringSlices(oldConfig.Domains, newConfig.Domains) {
+		changes["domains"] = map[string]interface{}{
+			"old": oldConfig.Domains,
+			"new": newConfig.Domains,
+		}
+	}
+	
+	// 检查检查间隔变化
+	if oldConfig.CheckInterval != newConfig.CheckInterval {
+		changes["check_interval"] = map[string]interface{}{
+			"old": oldConfig.CheckInterval,
+			"new": newConfig.CheckInterval,
+		}
+	}
+	
+	// 检查端口变化
+	if oldConfig.Port != newConfig.Port {
+		changes["port"] = map[string]interface{}{
+			"old": oldConfig.Port,
+			"new": newConfig.Port,
+		}
+	}
+	
+	// 检查日志级别变化
+	if oldConfig.LogLevel != newConfig.LogLevel {
+		changes["log_level"] = map[string]interface{}{
+			"old": oldConfig.LogLevel,
+			"new": newConfig.LogLevel,
+		}
+	}
+	
+
+	
+	// 检查超时时间变化
+	if oldConfig.Timeout != newConfig.Timeout {
+		changes["timeout"] = map[string]interface{}{
+			"old": oldConfig.Timeout,
+			"new": newConfig.Timeout,
+		}
+	}
+	
+
+	
+
+	
+	// 记录变化
+	if len(changes) > 0 {
+		slog.Info("检测到配置参数变化", "changes", changes)
+		
+		// 特别提醒重要变化
+		if _, exists := changes["check_interval"]; exists {
+			slog.Info("检查间隔已更新，将在下次定时器触发时生效")
+		}
+		if _, exists := changes["domains"]; exists {
+			slog.Info("域名列表已更新，立即触发检查")
+		}
+
+		if _, exists := changes["timeout"]; exists {
+			slog.Info("超时时间已更新，将在下次检查时生效")
+		}
+	} else {
+		slog.Debug("配置已重新加载，但未检测到参数变化")
+	}
+}
+
+// equalStringSlices 比较两个字符串切片是否相等
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i, v := range a {
+		if v != b[i] {
+			return false
+		}
+	}
+	return true
 }

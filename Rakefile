@@ -17,6 +17,7 @@ task :push do
 end
 
 task :run do
+  system 'docker compose down'
   system 'docker compose up -d --build'
   system 'docker compose logs -f'
 end

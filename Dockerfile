@@ -1,5 +1,5 @@
 # 构建阶段
-FROM golang:1.21-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 WORKDIR /app
 
@@ -22,8 +22,7 @@ WORKDIR /root/
 # 从构建阶段复制二进制文件
 COPY --from=builder /app/domain-exporter .
 
-# 复制配置文件
-COPY config.yml .
+# 不再需要复制配置文件，使用环境变量
 
 # 暴露端口
 EXPOSE 8080
