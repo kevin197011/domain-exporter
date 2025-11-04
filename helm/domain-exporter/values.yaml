@@ -2,7 +2,7 @@
 replicaCount: 1
 
 image:
-  repository: ghcr.io/kevin197011/kk-domain-exporter
+  repository: ghcr.io/kevin197011/domain-exporter
   pullPolicy: IfNotPresent
   tag: "latest"
 
