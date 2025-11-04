@@ -1,0 +1,58 @@
+# Production values for kk-domain-exporter
+replicaCount: 2
+
+image:
+  repository: ghcr.io/kevin197011/kk-domain-exporter
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 200m
+    memory: 256Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# Application configuration
+config:
+  # 生产环境监控的域名
+  domains: "yourdomain.com,anotherdomain.com,thirddomain.com"
+  checkInterval: 1800  # 30分钟检查一次
+  port: 8080
+  logLevel: "warn"
+  timeout: 60
+
+# Enable ServiceMonitor for Prometheus Operator
+serviceMonitor:
+  enabled: true
+  interval: 60s
+  scrapeTimeout: 30s
+  labels:
+    release: prometheus
+
+# Pod Disruption Budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Node affinity for production
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchExpressions:
+          - key: app.kubernetes.io/name
+            operator: In
+            values:
+            - kk-domain-exporter
+        topologyKey: kubernetes.io/hostname

@@ -122,6 +122,37 @@ docker-compose up -d
 
 # 启动完整监控栈（Nacos + 域名监控 + Prometheus + Grafana）
 docker-compose -f docker-compose-full.yml up -d
+
+### Kubernetes 部署 (Helm)
+
+#### 基本部署
+```bash
+# 克隆仓库
+git clone https://github.com/kevin197011/domain-exporter.git
+cd domain-exporter
+
+# 使用 Helm 部署
+helm install domain-exporter ./domain-exporter \
+  --set config.domains="yourdomain.com,example.com"
+```
+
+#### 生产环境部署
+```bash
+# 使用生产环境配置
+helm install domain-exporter ./domain-exporter \
+  --values ./domain-exporter/values-prod.yaml \
+  --set config.domains="prod1.com,prod2.com,prod3.com"
+```
+
+#### 启用 Prometheus 监控
+```bash
+helm install domain-exporter ./domain-exporter \
+  --set config.domains="yourdomain.com" \
+  --set serviceMonitor.enabled=true \
+  --set serviceMonitor.labels.release=prometheus
+```
+
+详细的 Helm 配置说明请参考 [domain-exporter/README.md](domain-exporter/README.md)。
 ```
 
 #### Nacos配置步骤

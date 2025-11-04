@@ -2,7 +2,6 @@
 .env
 
 # Go编译文件
-domain-exporter
 *.exe
 *.exe~
 *.dll
