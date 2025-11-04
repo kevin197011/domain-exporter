@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"net"
 	"sync"
+	"time"
 
 	"github.com/nacos-group/nacos-sdk-go/v2/clients"
 	"github.com/nacos-group/nacos-sdk-go/v2/clients/config_client"
@@ -23,30 +25,50 @@ type NacosConfigManager struct {
 // NewNacosConfigManager 创建Nacos配置管理器
 func NewNacosConfigManager(localConfig *Config) (*NacosConfigManager, error) {
 	if !localConfig.IsNacosEnabled() {
+		slog.Info("Nacos未启用，跳过Nacos配置管理器创建")
 		return nil, nil
 	}
+
+	// 记录详细的连接信息
+	serverIP := localConfig.GetNacosServerIP()
+	serverPort := localConfig.GetNacosServerPort()
+	
+	slog.Info("创建Nacos配置管理器", 
+		"nacos_url", localConfig.NacosUrl,
+		"server_ip", serverIP,
+		"server_port", serverPort,
+		"namespace_id", localConfig.NamespaceId,
+		"username", localConfig.Username,
+		"data_id", localConfig.DataId,
+		"group", localConfig.Group)
 
 	// 构建服务器配置
 	serverConfigs := []constant.ServerConfig{
 		{
-			IpAddr: localConfig.GetNacosServerIP(),
-			Port:   localConfig.GetNacosServerPort(),
+			IpAddr: serverIP,
+			Port:   serverPort,
 		},
 	}
 
 	// 构建客户端配置，使用默认值
 	clientConfig := constant.ClientConfig{
 		NamespaceId:         localConfig.NamespaceId,
-		TimeoutMs:           5000,
+		TimeoutMs:           10000, // 增加超时时间到10秒
 		NotLoadCacheAtStart: true,
 		LogDir:              "/tmp/nacos/log",
 		CacheDir:            "/tmp/nacos/cache",
-		LogLevel:            "info",
+		LogLevel:            "debug", // 增加日志级别
 		Username:            localConfig.Username,
 		Password:            localConfig.Password,
 	}
+	
+	slog.Info("Nacos客户端配置", 
+		"timeout_ms", clientConfig.TimeoutMs,
+		"log_dir", clientConfig.LogDir,
+		"cache_dir", clientConfig.CacheDir)
 
 	// 创建配置客户端
+	slog.Info("正在创建Nacos配置客户端...")
 	client, err := clients.NewConfigClient(
 		vo.NacosClientParam{
 			ClientConfig:  &clientConfig,
@@ -54,7 +76,17 @@ func NewNacosConfigManager(localConfig *Config) (*NacosConfigManager, error) {
 		},
 	)
 	if err != nil {
-		return nil, err
+		slog.Error("创建Nacos配置客户端失败", "error", err)
+		return nil, fmt.Errorf("创建Nacos配置客户端失败: %w", err)
+	}
+	
+	slog.Info("Nacos配置客户端创建成功")
+	
+	// 测试网络连通性
+	if err := testNacosConnectivity(localConfig); err != nil {
+		slog.Warn("Nacos网络连通性测试失败", "error", err)
+	} else {
+		slog.Info("Nacos网络连通性测试成功")
 	}
 
 	manager := &NacosConfigManager{
@@ -215,4 +247,22 @@ func (m *NacosConfigManager) Close() {
 		// Nacos SDK没有显式的Close方法，这里只是占位
 		close(m.updateChan)
 	}
+}
+
+// testNacosConnectivity 测试Nacos网络连通性
+func testNacosConnectivity(config *Config) error {
+	serverIP := config.GetNacosServerIP()
+	serverPort := config.GetNacosServerPort()
+	address := fmt.Sprintf("%s:%d", serverIP, serverPort)
+	
+	slog.Info("测试Nacos网络连通性", "address", address)
+	
+	conn, err := net.DialTimeout("tcp", address, 5*time.Second)
+	if err != nil {
+		return fmt.Errorf("无法连接到Nacos服务器 %s: %w", address, err)
+	}
+	defer conn.Close()
+	
+	slog.Info("Nacos服务器网络连接正常")
+	return nil
 }

@@ -61,13 +61,31 @@ func main() {
 	}))
 	slog.SetDefault(logger)
 
-	// 打印配置信息用于调试
+	// 打印详细的配置信息用于调试
 	slog.Info("配置加载完成", 
 		"domains", len(config.Domains),
 		"check_interval", config.CheckInterval,
 		"port", config.Port,
 		"timeout", config.Timeout,
 		"nacos_enabled", config.IsNacosEnabled())
+	
+	// 如果启用了Nacos，打印详细的Nacos配置
+	if config.IsNacosEnabled() {
+		slog.Info("Nacos配置详情", 
+			"nacos_url", config.NacosUrl,
+			"username", config.Username,
+			"namespace_id", config.NamespaceId,
+			"data_id", config.DataId,
+			"group", config.Group)
+		
+		// 打印环境变量以便调试
+		slog.Debug("环境变量调试信息",
+			"NACOS_URL", os.Getenv("NACOS_URL"),
+			"NACOS_USERNAME", os.Getenv("NACOS_USERNAME"),
+			"NACOS_NAMESPACE_ID", os.Getenv("NACOS_NAMESPACE_ID"),
+			"NACOS_DATA_ID", os.Getenv("NACOS_DATA_ID"),
+			"NACOS_GROUP", os.Getenv("NACOS_GROUP"))
+	}
 
 	// 创建exporter
 	exporter, err := NewDomainExporter(config)
