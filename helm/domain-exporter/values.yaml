@@ -112,9 +112,10 @@ secrets: []
 
 # Prometheus ServiceMonitor
 serviceMonitor:
-  enabled: false
-  namespace: ""
-  labels: {}
+  enabled: true
+  namespace: ""  # 留空使用当前命名空间
+  labels: 
+    release: prometheus  # 重要：需要匹配 Prometheus 的 serviceMonitorSelector
   interval: 30s
   scrapeTimeout: 10s
   path: /metrics
