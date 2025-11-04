@@ -18,15 +18,11 @@ FROM alpine:latest
 
 RUN apk --no-cache add ca-certificates tzdata
 
-# 创建应用用户和目录
+# 创建应用用户
 RUN addgroup -g 1001 -S appgroup && \
     adduser -u 1001 -S appuser -G appgroup
 
 WORKDIR /app
-
-# 创建Nacos所需的目录并设置权限
-RUN mkdir -p /app/logs/nacos /app/cache/nacos && \
-    chown -R appuser:appgroup /app
 
 # 从构建阶段复制二进制文件
 COPY --from=builder /app/domain-exporter .

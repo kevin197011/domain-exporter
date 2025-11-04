@@ -55,8 +55,8 @@ func NewNacosConfigManager(localConfig *Config) (*NacosConfigManager, error) {
 		NamespaceId:         localConfig.NamespaceId,
 		TimeoutMs:           15000, // 增加超时时间到15秒
 		NotLoadCacheAtStart: true,  // 不从缓存启动，避免文件权限问题
-		LogDir:              "/app/logs/nacos",     // 使用应用目录
-		CacheDir:            "/app/cache/nacos",   // 使用应用目录
+		LogDir:              "/tmp/nacos/log",     // 使用临时目录
+		CacheDir:            "/tmp/nacos/cache",   // 使用临时目录
 		LogLevel:            "error",  // 进一步降低日志级别
 		Username:            localConfig.Username,
 		Password:            localConfig.Password,
