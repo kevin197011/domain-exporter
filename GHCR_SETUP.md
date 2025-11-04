@@ -30,7 +30,7 @@
 ### 3. 首次推送后的包设置
 第一次成功推送后：
 1. 进入仓库的 **Packages** 标签页
-2. 找到 `domain-exporter` 包
+2. 找到 `kk-domain-exporter` 包
 3. 点击包名进入包设置
 4. 在 **Package settings** 中：
    - 设置包的可见性（Public/Private）
@@ -41,13 +41,13 @@
 ### 拉取镜像
 ```bash
 # 最新版本
-docker pull ghcr.io/kevin197011/domain-exporter:latest
+docker pull ghcr.io/kevin197011/kk-domain-exporter:latest
 
 # 特定 commit
-docker pull ghcr.io/kevin197011/domain-exporter:abc123
+docker pull ghcr.io/kevin197011/kk-domain-exporter:abc123
 
 # 完整 SHA
-docker pull ghcr.io/kevin197011/domain-exporter:1234567890abcdef...
+docker pull ghcr.io/kevin197011/kk-domain-exporter:1234567890abcdef...
 ```
 
 ### 运行容器
@@ -56,7 +56,7 @@ docker run -d \
   --name domain-exporter \
   -p 8080:8080 \
   -e DOMAINS="example.com,test.com" \
-  ghcr.io/kevin197011/domain-exporter:latest
+  ghcr.io/kevin197011/kk-domain-exporter:latest
 ```
 
 ### 使用 docker-compose
