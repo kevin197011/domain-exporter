@@ -94,13 +94,13 @@ config:
 # Nacos configuration (optional)
 nacos:
   enabled: true
-  url: "http://192.168.1.11:8848"  # 请明确指定端口，如 https://nacos.example.com:443
+  url: "http://192.168.1.11:8848"  
   username: "nacos"
   password: "nacos"
   namespaceId: "devops"
   dataId: "domain-exporter"
   group: "DEFAULT_GROUP"
-  skipSSLVerify: false  # 设置为 true 跳过 HTTPS SSL 证书验证
+  skipSSLVerify: true  # 设置为 true 跳过 HTTPS SSL 证书验证
 
 # Environment variables
 env: []

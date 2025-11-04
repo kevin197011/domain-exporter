@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -38,14 +39,36 @@ func NewNacosConfigManager(localConfig *Config) (*NacosConfigManager, error) {
 		"data_id", localConfig.DataId,
 		"group", localConfig.Group)
 
-	// 使用 Nacos SDK 的内置 URL 解析，不做自定义处理
-	// 直接传递完整的 Nacos URL 给 SDK
-	serverConfigs := []constant.ServerConfig{}
+	// 解析 Nacos URL 获取主机和端口
+	nacosURL := strings.TrimPrefix(localConfig.NacosUrl, "http://")
+	nacosURL = strings.TrimPrefix(nacosURL, "https://")
 	
-	// 让 Nacos SDK 通过 ClientConfig 中的 Endpoint 来处理 URL
-	// 这样 SDK 会自动解析协议、主机、端口等信息
+	var host string
+	var port uint64 = 8848 // 默认端口
+	
+	if strings.Contains(nacosURL, ":") {
+		parts := strings.Split(nacosURL, ":")
+		host = parts[0]
+		if len(parts) > 1 {
+			if p, err := strconv.ParseUint(parts[1], 10, 64); err == nil {
+				port = p
+			}
+		}
+	} else {
+		host = nacosURL
+	}
+	
+	// 构建服务器配置
+	serverConfigs := []constant.ServerConfig{
+		{
+			IpAddr: host,
+			Port:   port,
+		},
+	}
+	
+	slog.Info("Nacos服务器配置", "host", host, "port", port)
 
-	// 构建客户端配置，直接使用原始 URL
+	// 构建客户端配置
 	clientConfig := constant.ClientConfig{
 		NamespaceId:         localConfig.NamespaceId,
 		TimeoutMs:           20000, // 增加超时时间到20秒
@@ -55,8 +78,6 @@ func NewNacosConfigManager(localConfig *Config) (*NacosConfigManager, error) {
 		LogLevel:            "debug",  // 增加日志级别以便调试
 		Username:            localConfig.Username,
 		Password:            localConfig.Password,
-		// 直接使用完整的 Nacos URL，让 SDK 自动处理
-		Endpoint:            localConfig.NacosUrl,  // 使用 Endpoint 而不是 ServerConfigs
 		// Kubernetes环境优化配置
 		UpdateThreadNum:      1,      // 减少线程数
 		UpdateCacheWhenEmpty: false,  // 空配置时不更新缓存
@@ -85,12 +106,12 @@ func NewNacosConfigManager(localConfig *Config) (*NacosConfigManager, error) {
 		}
 	}
 
-	// 创建配置客户端，使用 Endpoint 方式
-	slog.Info("正在创建Nacos配置客户端...", "endpoint", clientConfig.Endpoint)
+	// 创建配置客户端
+	slog.Info("正在创建Nacos配置客户端...", "host", host, "port", port)
 	client, err := clients.NewConfigClient(
 		vo.NacosClientParam{
 			ClientConfig:  &clientConfig,
-			ServerConfigs: serverConfigs, // 空的 serverConfigs，使用 Endpoint
+			ServerConfigs: serverConfigs,
 		},
 	)
 	if err != nil {
