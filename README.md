@@ -88,14 +88,26 @@ curl http://localhost:8080/metrics
 
 ### Docker运行
 
-#### 单独运行
-1. 构建镜像：
+#### 使用预构建镜像
 ```bash
-docker build -t domain-exporter .
+# 拉取镜像
+docker pull kevin197011/domain-exporter:latest
+
+# 运行容器
+docker run -d \
+  --name domain-exporter \
+  -p 8080:8080 \
+  -e DOMAINS="example.com,test.com" \
+  -e CHECK_INTERVAL=3600 \
+  kevin197011/domain-exporter:latest
 ```
 
-2. 运行容器：
+#### 本地构建
 ```bash
+# 构建镜像
+docker build -t domain-exporter .
+
+# 运行容器
 docker run -d -p 8080:8080 -v $(pwd)/config.yml:/root/config.yml domain-exporter
 ```
 
