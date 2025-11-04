@@ -99,7 +99,7 @@ func (c *Config) GetNacosServerPort() uint64 {
 		return 8848
 	}
 	
-	// 分离IP和端口
+	// 检查是否明确指定了端口
 	if idx := strings.LastIndex(host, ":"); idx != -1 {
 		portStr := host[idx+1:]
 		if port, err := strconv.ParseUint(portStr, 10, 64); err == nil {
@@ -107,6 +107,15 @@ func (c *Config) GetNacosServerPort() uint64 {
 		}
 	}
 	
+	// 如果URL中没有明确指定端口，根据协议推断
+	// 建议：在生产环境中应该在URL中明确指定端口
+	if strings.HasPrefix(c.NacosUrl, "https://") {
+		// HTTPS 默认 443，但建议明确指定
+		return 443
+	}
+	
+	// HTTP 或无协议前缀时，使用 Nacos 默认端口
+	// 注意：如果你的 Nacos 使用其他端口（如 443），请在 URL 中明确指定
 	return 8848
 }
 

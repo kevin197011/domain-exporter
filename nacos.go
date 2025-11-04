@@ -79,17 +79,23 @@ func NewNacosConfigManager(localConfig *Config) (*NacosConfigManager, error) {
 
 // loadConfigFromNacos 从Nacos加载配置
 func (m *NacosConfigManager) loadConfigFromNacos() error {
+	slog.Info("尝试从Nacos加载配置", 
+		"namespace", m.config.NamespaceId,
+		"group", m.config.Group, 
+		"data_id", m.config.DataId)
+		
 	content, err := m.client.GetConfig(vo.ConfigParam{
 		DataId: m.config.DataId,
 		Group:  m.config.Group,
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("从Nacos获取配置失败: %w", err)
 	}
 
 	// 检查配置内容是否为空
 	if content == "" {
-		return fmt.Errorf("Nacos配置内容为空")
+		return fmt.Errorf("Nacos配置内容为空，请在Nacos控制台创建配置: namespace=%s, group=%s, dataId=%s", 
+			m.config.NamespaceId, m.config.Group, m.config.DataId)
 	}
 
 	var nacosConfig Config

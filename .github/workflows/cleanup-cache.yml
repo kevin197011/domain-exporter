@@ -1,0 +1,19 @@
+name: Cleanup Build Cache
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 每周清理一次缓存
+    - cron: '0 2 * * 0'
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    
+    steps:
+    - name: Cleanup
+      run: |
+        echo "Manual cache cleanup can be done through GitHub UI"
+        echo "Go to Actions -> Caches to manually delete problematic caches"

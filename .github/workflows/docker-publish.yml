@@ -46,7 +46,7 @@ jobs:
       id: meta
       uses: docker/metadata-action@v5
       with:
-        images: ghcr.io/${{ github.repository_owner }}/domain-exporter
+        images: ghcr.io/${{ github.repository_owner }}/kk-domain-exporter
 
     - name: Set short SHA
       id: vars
@@ -59,11 +59,9 @@ jobs:
         file: ./Dockerfile
         push: true
         tags: |
-          ghcr.io/${{ github.repository }}:${{ github.sha }}
-          ghcr.io/${{ github.repository }}:latest
-          ghcr.io/${{ github.repository }}:${{ steps.vars.outputs.short_sha }}
+          ghcr.io/${{ github.repository_owner }}/kk-domain-exporter:${{ github.sha }}
+          ghcr.io/${{ github.repository_owner }}/kk-domain-exporter:latest
+          ghcr.io/${{ github.repository_owner }}/kk-domain-exporter:${{ steps.vars.outputs.short_sha }}
         labels: ${{ steps.meta.outputs.labels }}
         platforms: linux/amd64,linux/arm64
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
 

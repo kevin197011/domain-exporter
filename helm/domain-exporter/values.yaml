@@ -93,11 +93,11 @@ config:
 
 # Nacos configuration (optional)
 nacos:
-  enabled: false
-  url: "http://nacos:8848"
+  enabled: true
+  url: "http://192.168.1.11:8848"  # 请明确指定端口，如 https://nacos.example.com:443
   username: "nacos"
   password: "nacos"
-  namespaceId: "public"
+  namespaceId: "devops"
   dataId: "domain-exporter"
   group: "DEFAULT_GROUP"
 
