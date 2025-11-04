@@ -17,6 +17,9 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
+      actions: read
+      security-events: write
 
     steps:
     - name: Checkout repository
@@ -44,6 +47,15 @@ jobs:
         registry: ${{ env.REGISTRY }}
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Debug registry info
+      if: github.event_name != 'pull_request'
+      run: |
+        echo "Registry: ${{ env.REGISTRY }}"
+        echo "Image name: ${{ env.IMAGE_NAME }}"
+        echo "Actor: ${{ github.actor }}"
+        echo "Repository: ${{ github.repository }}"
+        echo "Repository owner: ${{ github.repository_owner }}"
 
     - name: Extract metadata
       id: meta

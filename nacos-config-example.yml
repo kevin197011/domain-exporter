@@ -21,8 +21,6 @@ log_level: debug
 # 请求超时时间（秒） - 可动态调整WHOIS查询超时
 timeout: 5
 
-
-
 # 测试说明：
 # 1. domains: 修改此列表会立即触发域名检查
 # 2. check_interval: 修改此值会在下次定时器触发时更新检查间隔
