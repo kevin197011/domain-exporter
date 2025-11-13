@@ -21,3 +21,7 @@ task :run do
   system 'docker compose up -d --build'
   system 'docker compose logs -f'
 end
+
+task :build do
+  system 'go build -v . && rm -rf domain-exporter'
+end

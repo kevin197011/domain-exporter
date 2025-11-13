@@ -10,12 +10,12 @@ import (
 
 // DomainExporter Prometheus exporter结构
 type DomainExporter struct {
-	config      *Config
-	mutex       sync.RWMutex
-	nacosManager *NacosConfigManager
-	stopChan    chan struct{}
-	triggerChan chan struct{} // 用于触发立即检查
-	initialCheckDone bool      // 标记是否已完成初始检查
+	config           *Config
+	mutex            sync.RWMutex
+	nacosManager     *NacosConfigManager
+	stopChan         chan struct{}
+	triggerChan      chan struct{} // 用于触发立即检查
+	initialCheckDone bool          // 标记是否已完成初始检查
 
 	// Prometheus指标
 	domainExpiryDays *prometheus.GaugeVec
@@ -28,7 +28,7 @@ type DomainExporter struct {
 func NewDomainExporter(localConfig *Config) (*DomainExporter, error) {
 	var finalConfig *Config
 	var nacosManager *NacosConfigManager
-	
+
 	// 如果启用了Nacos，优先尝试从Nacos获取配置
 	if localConfig.IsNacosEnabled() {
 		var err error
@@ -131,31 +131,31 @@ func (e *DomainExporter) StartMonitoring() {
 		case <-ticker.C:
 			slog.Debug("定时器触发，开始检查域名")
 			e.checkAllDomains()
-			
+
 			// 检查配置是否变化，如果变化则重置定时器
 			newInterval := time.Duration(e.getCurrentConfig().CheckInterval) * time.Second
 			if newInterval != currentInterval {
-				slog.Info("检查间隔已更新", 
+				slog.Info("检查间隔已更新",
 					"old_interval_seconds", int(currentInterval.Seconds()),
 					"new_interval_seconds", int(newInterval.Seconds()))
 				currentInterval = newInterval
 				ticker.Reset(currentInterval)
 			}
-			
+
 		case <-e.triggerChan:
 			slog.Info("收到配置变更触发信号，立即执行域名检查")
 			e.checkAllDomains()
-			
+
 			// 重置定时器，使用最新的检查间隔
 			newInterval := time.Duration(e.getCurrentConfig().CheckInterval) * time.Second
 			if newInterval != currentInterval {
-				slog.Info("配置变更后更新检查间隔", 
+				slog.Info("配置变更后更新检查间隔",
 					"old_interval_seconds", int(currentInterval.Seconds()),
 					"new_interval_seconds", int(newInterval.Seconds()))
 				currentInterval = newInterval
 			}
 			ticker.Reset(currentInterval)
-			
+
 		case <-e.stopChan:
 			slog.Info("停止定时监控")
 			return
@@ -179,10 +179,11 @@ func (e *DomainExporter) watchConfigUpdates() {
 				e.config = newConfig
 				initialCheckDone := e.initialCheckDone
 				e.mutex.Unlock()
-				
+
 				// 详细记录所有配置变化
 				e.logConfigChanges(&oldConfig, newConfig)
-				
+				e.cleanupMetricsForRemovedDomains(&oldConfig, newConfig)
+
 				// 只有在初始检查完成后才触发配置变更检查，避免启动时重复检查
 				if initialCheckDone {
 					select {
@@ -200,8 +201,6 @@ func (e *DomainExporter) watchConfigUpdates() {
 		}
 	}
 }
-
-
 
 // getCurrentConfig 获取当前配置
 func (e *DomainExporter) getCurrentConfig() *Config {
@@ -237,7 +236,7 @@ func (e *DomainExporter) checkAllDomains() {
 	for i, domain := range currentConfig.Domains {
 		slog.Debug("检查进度", "current", i+1, "total", len(currentConfig.Domains), "domain", domain)
 		e.checkDomain(domain)
-		
+
 		// 在域名之间添加短暂延迟，避免对WHOIS服务器造成压力
 		if i < len(currentConfig.Domains)-1 {
 			time.Sleep(time.Second * 1)
@@ -282,7 +281,7 @@ func (e *DomainExporter) checkDomain(domain string) {
 	// 设置过期时间戳
 	e.domainExpiryTime.WithLabelValues(domain).Set(float64(domainInfo.ExpiryDate.Unix()))
 
-	slog.Info("域名检查完成", 
+	slog.Info("域名检查完成",
 		"domain", domain,
 		"days_until_expiry", int(daysUntilExpiryInt),
 		"expiry_date", domainInfo.ExpiryDate.Format("2006-01-02"),
@@ -292,7 +291,7 @@ func (e *DomainExporter) checkDomain(domain string) {
 // logConfigChanges 记录配置变化的详细信息
 func (e *DomainExporter) logConfigChanges(oldConfig, newConfig *Config) {
 	changes := make(map[string]interface{})
-	
+
 	// 检查域名列表变化
 	if !equalStringSlices(oldConfig.Domains, newConfig.Domains) {
 		changes["domains"] = map[string]interface{}{
@@ -300,7 +299,7 @@ func (e *DomainExporter) logConfigChanges(oldConfig, newConfig *Config) {
 			"new": newConfig.Domains,
 		}
 	}
-	
+
 	// 检查检查间隔变化
 	if oldConfig.CheckInterval != newConfig.CheckInterval {
 		changes["check_interval"] = map[string]interface{}{
@@ -308,7 +307,7 @@ func (e *DomainExporter) logConfigChanges(oldConfig, newConfig *Config) {
 			"new": newConfig.CheckInterval,
 		}
 	}
-	
+
 	// 检查端口变化
 	if oldConfig.Port != newConfig.Port {
 		changes["port"] = map[string]interface{}{
@@ -316,7 +315,7 @@ func (e *DomainExporter) logConfigChanges(oldConfig, newConfig *Config) {
 			"new": newConfig.Port,
 		}
 	}
-	
+
 	// 检查日志级别变化
 	if oldConfig.LogLevel != newConfig.LogLevel {
 		changes["log_level"] = map[string]interface{}{
@@ -324,7 +323,7 @@ func (e *DomainExporter) logConfigChanges(oldConfig, newConfig *Config) {
 			"new": newConfig.LogLevel,
 		}
 	}
-	
+
 	// 检查超时时间变化
 	if oldConfig.Timeout != newConfig.Timeout {
 		changes["timeout"] = map[string]interface{}{
@@ -333,11 +332,10 @@ func (e *DomainExporter) logConfigChanges(oldConfig, newConfig *Config) {
 		}
 	}
 
-	
 	// 记录变化
 	if len(changes) > 0 {
 		slog.Info("检测到配置参数变化", "changes", changes)
-		
+
 		// 特别提醒重要变化
 		if _, exists := changes["check_interval"]; exists {
 			slog.Info("检查间隔已更新，将在下次定时器触发时生效")
@@ -365,4 +363,31 @@ func equalStringSlices(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// cleanupMetricsForRemovedDomains 移除已经从配置中删除的域名指标数据
+func (e *DomainExporter) cleanupMetricsForRemovedDomains(oldConfig, newConfig *Config) {
+	if oldConfig == nil {
+		return
+	}
+
+	removed := make(map[string]struct{})
+	for _, domain := range oldConfig.Domains {
+		removed[domain] = struct{}{}
+	}
+	for _, domain := range newConfig.Domains {
+		delete(removed, domain)
+	}
+
+	if len(removed) == 0 {
+		return
+	}
+
+	for domain := range removed {
+		e.domainExpiryDays.DeleteLabelValues(domain)
+		e.domainExpiryTime.DeleteLabelValues(domain)
+		e.domainCheckTime.DeleteLabelValues(domain)
+		e.domainStatus.DeleteLabelValues(domain)
+		slog.Info("清理已删除域名的指标", "domain", domain)
+	}
 }

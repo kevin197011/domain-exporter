@@ -1,42 +1,42 @@
 package main
 
 import (
-	"io/ioutil"
 	"os"
 	"strconv"
 	"strings"
+
 	"gopkg.in/yaml.v2"
 )
 
 // Config 配置结构
 type Config struct {
 	// 业务配置（从Nacos获取）
-	Domains           []string `yaml:"domains"`
-	CheckInterval     int      `yaml:"check_interval"`
-	Port              int      `yaml:"port"`
-	LogLevel          string   `yaml:"log_level"`
-	Timeout           int      `yaml:"timeout"`
-	
+	Domains       []string `yaml:"domains"`
+	CheckInterval int      `yaml:"check_interval"`
+	Port          int      `yaml:"port"`
+	LogLevel      string   `yaml:"log_level"`
+	Timeout       int      `yaml:"timeout"`
+
 	// Nacos连接配置（从本地配置文件获取）
-	NacosUrl          string `yaml:"nacos_url"`
-	Username          string `yaml:"username"`
-	Password          string `yaml:"password"`
-	NamespaceId       string `yaml:"namespace_id"`
-	DataId            string `yaml:"data_id"`
-	Group             string `yaml:"group"`
-	SkipSSLVerify     bool   `yaml:"skip_ssl_verify"`  // 跳过SSL证书验证
+	NacosUrl      string `yaml:"nacos_url"`
+	Username      string `yaml:"username"`
+	Password      string `yaml:"password"`
+	NamespaceId   string `yaml:"namespace_id"`
+	DataId        string `yaml:"data_id"`
+	Group         string `yaml:"group"`
+	SkipSSLVerify bool   `yaml:"skip_ssl_verify"` // 跳过SSL证书验证
 }
 
 // LoadConfig 加载配置（优先使用环境变量，然后是配置文件）
 func LoadConfig(filename string) (*Config, error) {
 	var config Config
-	
+
 	// 首先尝试从环境变量加载
 	loadFromEnv(&config)
-	
+
 	// 如果配置文件存在，则加载并合并（环境变量优先）
 	if filename != "" {
-		if data, err := ioutil.ReadFile(filename); err == nil {
+		if data, err := os.ReadFile(filename); err == nil {
 			var fileConfig Config
 			if err := yaml.Unmarshal(data, &fileConfig); err == nil {
 				// 合并配置，环境变量优先
@@ -55,8 +55,6 @@ func LoadConfig(filename string) (*Config, error) {
 func (c *Config) IsNacosEnabled() bool {
 	return c.NacosUrl != ""
 }
-
-
 
 // loadFromEnv 从环境变量加载配置
 func loadFromEnv(config *Config) {
@@ -82,7 +80,7 @@ func loadFromEnv(config *Config) {
 	if val := os.Getenv("NACOS_SKIP_SSL_VERIFY"); val != "" {
 		config.SkipSSLVerify = val == "true" || val == "1"
 	}
-	
+
 	// 业务配置
 	if val := os.Getenv("DOMAINS"); val != "" {
 		config.Domains = strings.Split(val, ",")
@@ -111,7 +109,6 @@ func loadFromEnv(config *Config) {
 		}
 	}
 
-
 }
 
 // mergeConfig 合并配置，env配置优先
@@ -135,7 +132,7 @@ func mergeConfig(envConfig, fileConfig *Config) {
 	if envConfig.Group == "" {
 		envConfig.Group = fileConfig.Group
 	}
-	
+
 	// 业务配置
 	if len(envConfig.Domains) == 0 {
 		envConfig.Domains = fileConfig.Domains
@@ -172,7 +169,7 @@ func applyDefaults(config *Config) {
 	if config.Timeout == 0 {
 		config.Timeout = 30 // 默认超时30秒
 	}
-	
+
 	// Nacos连接配置默认值
 	if config.DataId == "" {
 		config.DataId = "domain-exporter"
