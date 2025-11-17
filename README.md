@@ -5,8 +5,11 @@
 ## 功能特性
 
 - 监控多个域名的过期时间
+- **每天凌晨3点自动执行域名检查**
+- 配置更新（如域名列表变化）时立即触发检查
 - 提供Prometheus格式的指标
-- 支持配置文件
+- 支持配置文件和环境变量
+- 支持Nacos动态配置管理
 - 容器化部署
 - 优雅关闭
 
@@ -41,7 +44,7 @@ NACOS_GROUP=DEFAULT_GROUP        # 可选，默认为 DEFAULT_GROUP
 ```bash
 # 本地配置模式
 DOMAINS=your-domain.com,another-domain.com
-CHECK_INTERVAL=3600  # 检查间隔（秒）
+# 注意：定时检查已改为每天凌晨3点自动执行，CHECK_INTERVAL 已不再使用
 PORT=8080           # HTTP服务端口
 LOG_LEVEL=info      # 日志级别
 TIMEOUT=30          # 请求超时时间（秒）
@@ -98,8 +101,8 @@ docker run -d \
   --name domain-exporter \
   -p 8080:8080 \
   -e DOMAINS="example.com,test.com" \
-  -e CHECK_INTERVAL=3600 \
   ghcr.io/kevin197011/domain-exporter:latest
+# 注意：定时检查已改为每天凌晨3点自动执行，无需设置 CHECK_INTERVAL
 ```
 
 #### 本地构建
@@ -168,13 +171,11 @@ helm install domain-exporter ./domain-exporter \
 所有以下参数都支持通过Nacos动态调整，无需重启服务：
 
 - **domains**: 监控的域名列表，修改后立即触发检查
-- **check_interval**: 检查间隔（秒），修改后在下次定时器触发时生效
+- **定时执行**: 固定每天凌晨3点自动执行域名检查（不再使用 check_interval 配置）
 - **port**: HTTP服务端口（注意：端口变更需要重启服务）
 - **log_level**: 日志级别（debug/info/warn/error）
-
 - **timeout**: WHOIS查询超时时间（秒），修改后在下次查询时生效
-
-- **whois_servers**: 备用WHOIS服务器列表
+- **whois_servers**: 备用WHOIS服务器列表（如果配置）
 
 #### 配置变更监控
 - 访问 `http://localhost:8080/config` 查看当前配置

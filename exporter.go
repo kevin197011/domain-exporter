@@ -113,48 +113,66 @@ func (e *DomainExporter) Collect(ch chan<- prometheus.Metric) {
 	e.domainStatus.Collect(ch)
 }
 
+// next3AM 计算到下一个凌晨3点的时间
+func next3AM() time.Time {
+	now := time.Now()
+	// 今天的3点
+	today3AM := time.Date(now.Year(), now.Month(), now.Day(), 3, 0, 0, 0, now.Location())
+
+	// 如果现在已经过了今天的3点，则返回明天的3点
+	if now.After(today3AM) || now.Equal(today3AM) {
+		return today3AM.Add(24 * time.Hour)
+	}
+
+	// 否则返回今天的3点
+	return today3AM
+}
+
 // StartMonitoring 启动后台监控
 func (e *DomainExporter) StartMonitoring() {
 	// 立即执行一次检查
 	e.checkAllDomains()
 	e.initialCheckDone = true
 
-	// 获取初始检查间隔
-	currentInterval := time.Duration(e.getCurrentConfig().CheckInterval) * time.Second
-	ticker := time.NewTicker(currentInterval)
-	defer ticker.Stop()
+	// 计算到下一个3点的时间
+	nextCheckTime := next3AM()
+	durationUntil3AM := time.Until(nextCheckTime)
+	timer := time.NewTimer(durationUntil3AM)
+	defer timer.Stop()
 
-	slog.Info("启动定时监控", "check_interval_seconds", e.getCurrentConfig().CheckInterval)
+	slog.Info("启动定时监控",
+		"schedule", "每天凌晨3点",
+		"next_check_time", nextCheckTime.Format("2006-01-02 15:04:05"),
+		"duration_until_next", durationUntil3AM.Round(time.Minute))
 
 	for {
 		select {
-		case <-ticker.C:
-			slog.Debug("定时器触发，开始检查域名")
+		case <-timer.C:
+			slog.Info("定时器触发（每天凌晨3点），开始检查域名")
 			e.checkAllDomains()
 
-			// 检查配置是否变化，如果变化则重置定时器
-			newInterval := time.Duration(e.getCurrentConfig().CheckInterval) * time.Second
-			if newInterval != currentInterval {
-				slog.Info("检查间隔已更新",
-					"old_interval_seconds", int(currentInterval.Seconds()),
-					"new_interval_seconds", int(newInterval.Seconds()))
-				currentInterval = newInterval
-				ticker.Reset(currentInterval)
-			}
+			// 重新计算到下一个3点的时间
+			nextCheckTime = next3AM()
+			durationUntil3AM = time.Until(nextCheckTime)
+			timer.Reset(durationUntil3AM)
+			slog.Info("已设置下次检查时间",
+				"next_check_time", nextCheckTime.Format("2006-01-02 15:04:05"),
+				"duration_until_next", durationUntil3AM.Round(time.Minute))
 
 		case <-e.triggerChan:
 			slog.Info("收到配置变更触发信号，立即执行域名检查")
 			e.checkAllDomains()
 
-			// 重置定时器，使用最新的检查间隔
-			newInterval := time.Duration(e.getCurrentConfig().CheckInterval) * time.Second
-			if newInterval != currentInterval {
-				slog.Info("配置变更后更新检查间隔",
-					"old_interval_seconds", int(currentInterval.Seconds()),
-					"new_interval_seconds", int(newInterval.Seconds()))
-				currentInterval = newInterval
+			// 配置更新后，重新计算到下一个3点的时间（不影响定时器）
+			nextCheckTime = next3AM()
+			durationUntil3AM = time.Until(nextCheckTime)
+			// 如果定时器还在运行，重置它
+			if !timer.Stop() {
+				<-timer.C
 			}
-			ticker.Reset(currentInterval)
+			timer.Reset(durationUntil3AM)
+			slog.Debug("配置更新后，定时器已重置",
+				"next_check_time", nextCheckTime.Format("2006-01-02 15:04:05"))
 
 		case <-e.stopChan:
 			slog.Info("停止定时监控")
@@ -175,14 +193,20 @@ func (e *DomainExporter) watchConfigUpdates() {
 		case newConfig := <-updateChan:
 			if newConfig != nil {
 				e.mutex.Lock()
-				oldConfig := *e.config // 复制旧配置
+				var oldConfig *Config
+				if e.config != nil {
+					oldConfigCopy := *e.config
+					oldConfig = &oldConfigCopy
+				}
 				e.config = newConfig
 				initialCheckDone := e.initialCheckDone
 				e.mutex.Unlock()
 
 				// 详细记录所有配置变化
-				e.logConfigChanges(&oldConfig, newConfig)
-				e.cleanupMetricsForRemovedDomains(&oldConfig, newConfig)
+				if oldConfig != nil {
+					e.logConfigChanges(oldConfig, newConfig)
+					e.cleanupMetricsForRemovedDomains(oldConfig, newConfig)
+				}
 
 				// 只有在初始检查完成后才触发配置变更检查，避免启动时重复检查
 				if initialCheckDone {
@@ -338,7 +362,7 @@ func (e *DomainExporter) logConfigChanges(oldConfig, newConfig *Config) {
 
 		// 特别提醒重要变化
 		if _, exists := changes["check_interval"]; exists {
-			slog.Info("检查间隔已更新，将在下次定时器触发时生效")
+			slog.Debug("检查间隔配置已更新（注意：当前使用固定时间执行，每天凌晨3点）")
 		}
 		if _, exists := changes["domains"]; exists {
 			slog.Info("域名列表已更新，立即触发检查")

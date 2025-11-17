@@ -6,10 +6,18 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/likexian/whois"
 	whoisparser "github.com/likexian/whois-parser"
+)
+
+var (
+	// 缓存编译后的正则表达式
+	expirationPatterns []*regexp.Regexp
+	registrarPatterns  []*regexp.Regexp
+	patternOnce        sync.Once
 )
 
 // DomainInfo 域名信息结构
@@ -24,7 +32,7 @@ type DomainInfo struct {
 // GetDomainInfo 获取域名信息
 func GetDomainInfo(domain string, timeout time.Duration) (*DomainInfo, error) {
 	slog.Debug("开始标准WHOIS查询", "domain", domain, "timeout", timeout)
-	
+
 	// 创建带超时的context
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -36,7 +44,7 @@ func GetDomainInfo(domain string, timeout time.Duration) (*DomainInfo, error) {
 	}
 
 	resultChan := make(chan result, 1)
-	
+
 	// 在goroutine中执行whois查询
 	go func() {
 		slog.Debug("执行WHOIS查询", "domain", domain)
@@ -65,7 +73,7 @@ func GetDomainInfo(domain string, timeout time.Duration) (*DomainInfo, error) {
 // parseDomainInfo 解析域名信息
 func parseDomainInfo(domain, whoisData string) (*DomainInfo, error) {
 	slog.Debug("开始解析WHOIS数据", "domain", domain, "data_length", len(whoisData))
-	
+
 	// 打印WHOIS原始数据的前500字符用于调试
 	if len(whoisData) > 0 {
 		preview := whoisData
@@ -81,25 +89,25 @@ func parseDomainInfo(domain, whoisData string) (*DomainInfo, error) {
 		slog.Error("WHOIS解析失败", "domain", domain, "error", err, "raw_data_length", len(whoisData))
 		return nil, fmt.Errorf("whois解析失败: %v", err)
 	}
-	
-	slog.Debug("WHOIS解析成功", "domain", domain, 
+
+	slog.Debug("WHOIS解析成功", "domain", domain,
 		"registrar", parsed.Registrar.Name,
 		"expiration_date", parsed.Domain.ExpirationDate,
 		"status_count", len(parsed.Domain.Status))
 
 	// 检查解析结果
 	if parsed.Domain.ExpirationDate == "" {
-		slog.Error("WHOIS解析结果中没有过期时间", "domain", domain, 
+		slog.Error("WHOIS解析结果中没有过期时间", "domain", domain,
 			"registrar", parsed.Registrar.Name,
 			"domain_name", parsed.Domain.Name)
-		
+
 		// 尝试从原始数据中手动提取过期时间
 		return parseExpirationFromRawData(domain, whoisData)
 	}
 
 	// 解析过期时间
 	slog.Debug("尝试解析过期时间", "domain", domain, "expiration_date", parsed.Domain.ExpirationDate)
-	
+
 	expiryDate, err := time.Parse("2006-01-02T15:04:05Z", parsed.Domain.ExpirationDate)
 	if err != nil {
 		// 尝试其他时间格式
@@ -112,14 +120,14 @@ func parseDomainInfo(domain, whoisData string) (*DomainInfo, error) {
 			"Mon Jan 02 15:04:05 MST 2006",
 			"January 02 2006",
 		}
-		
+
 		for _, format := range formats {
 			if expiryDate, err = time.Parse(format, parsed.Domain.ExpirationDate); err == nil {
 				slog.Debug("成功解析过期时间", "domain", domain, "format", format, "date", expiryDate)
 				break
 			}
 		}
-		
+
 		if err != nil {
 			slog.Error("无法解析过期时间", "domain", domain, "expiration_date", parsed.Domain.ExpirationDate, "error", err)
 			// 尝试从原始数据中手动提取
@@ -148,10 +156,10 @@ func parseDomainInfo(domain, whoisData string) (*DomainInfo, error) {
 func GetDomainInfoWithFallback(domain string, timeout time.Duration, config *Config) (*DomainInfo, error) {
 	maxRetries := 2
 	var lastErr error
-	
+
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		slog.Debug("WHOIS查询尝试", "domain", domain, "attempt", attempt, "max_retries", maxRetries)
-		
+
 		info, err := GetDomainInfo(domain, timeout)
 		if err == nil {
 			if attempt > 1 {
@@ -159,10 +167,10 @@ func GetDomainInfoWithFallback(domain string, timeout time.Duration, config *Con
 			}
 			return info, nil
 		}
-		
+
 		lastErr = err
 		slog.Debug("WHOIS查询失败", "domain", domain, "attempt", attempt, "error", err)
-		
+
 		// 如果不是最后一次尝试，等待一下再重试
 		if attempt < maxRetries {
 			waitTime := time.Duration(attempt) * time.Second
@@ -170,48 +178,65 @@ func GetDomainInfoWithFallback(domain string, timeout time.Duration, config *Con
 			time.Sleep(waitTime)
 		}
 	}
-	
+
 	slog.Error("所有WHOIS查询尝试都失败了", "domain", domain, "attempts", maxRetries, "last_error", lastErr)
 	return nil, fmt.Errorf("WHOIS查询失败: %v", lastErr)
+}
+
+// initPatterns 初始化并缓存正则表达式
+func initPatterns() {
+	patternOnce.Do(func() {
+		// 常见的过期时间字段名
+		expirationPatternStrs := []string{
+			`(?i)Registry Expiry Date:\s*(.+)`,
+			`(?i)Registrar Registration Expiration Date:\s*(.+)`,
+			`(?i)Expiry Date:\s*(.+)`,
+			`(?i)Expiration Date:\s*(.+)`,
+			`(?i)Expires:\s*(.+)`,
+			`(?i)Expire:\s*(.+)`,
+			`(?i)Expiration Time:\s*(.+)`,
+			`(?i)Registry Expiration Date:\s*(.+)`,
+			`(?i)Domain Expiration Date:\s*(.+)`,
+			`(?i)Paid-till:\s*(.+)`,
+		}
+
+		// 常见的注册商字段名
+		registrarPatternStrs := []string{
+			`(?i)Registrar:\s*(.+)`,
+			`(?i)Sponsoring Registrar:\s*(.+)`,
+			`(?i)Registrar Name:\s*(.+)`,
+		}
+
+		expirationPatterns = make([]*regexp.Regexp, 0, len(expirationPatternStrs))
+		for _, pattern := range expirationPatternStrs {
+			expirationPatterns = append(expirationPatterns, regexp.MustCompile(pattern))
+		}
+
+		registrarPatterns = make([]*regexp.Regexp, 0, len(registrarPatternStrs))
+		for _, pattern := range registrarPatternStrs {
+			registrarPatterns = append(registrarPatterns, regexp.MustCompile(pattern))
+		}
+	})
 }
 
 // parseExpirationFromRawData 从原始WHOIS数据中手动提取过期时间
 func parseExpirationFromRawData(domain, whoisData string) (*DomainInfo, error) {
 	slog.Debug("尝试从原始数据手动解析过期时间", "domain", domain)
-	
-	// 常见的过期时间字段名
-	expirationPatterns := []string{
-		`(?i)Registry Expiry Date:\s*(.+)`,
-		`(?i)Registrar Registration Expiration Date:\s*(.+)`,
-		`(?i)Expiry Date:\s*(.+)`,
-		`(?i)Expiration Date:\s*(.+)`,
-		`(?i)Expires:\s*(.+)`,
-		`(?i)Expire:\s*(.+)`,
-		`(?i)Expiration Time:\s*(.+)`,
-		`(?i)Registry Expiration Date:\s*(.+)`,
-		`(?i)Domain Expiration Date:\s*(.+)`,
-		`(?i)Paid-till:\s*(.+)`,
-	}
-	
-	// 常见的注册商字段名
-	registrarPatterns := []string{
-		`(?i)Registrar:\s*(.+)`,
-		`(?i)Sponsoring Registrar:\s*(.+)`,
-		`(?i)Registrar Name:\s*(.+)`,
-	}
-	
+
+	// 初始化正则表达式（只执行一次）
+	initPatterns()
+
 	var expiryDate time.Time
 	var registrar string
 	var found bool
-	
+
 	// 尝试提取过期时间
-	for _, pattern := range expirationPatterns {
-		re := regexp.MustCompile(pattern)
+	for _, re := range expirationPatterns {
 		matches := re.FindStringSubmatch(whoisData)
 		if len(matches) > 1 {
 			dateStr := strings.TrimSpace(matches[1])
-			slog.Debug("找到过期时间字段", "domain", domain, "pattern", pattern, "date_str", dateStr)
-			
+			slog.Debug("找到过期时间字段", "domain", domain, "date_str", dateStr)
+
 			// 尝试解析日期
 			if parsedDate, err := parseFlexibleDate(dateStr); err == nil {
 				expiryDate = parsedDate
@@ -223,25 +248,24 @@ func parseExpirationFromRawData(domain, whoisData string) (*DomainInfo, error) {
 			}
 		}
 	}
-	
+
 	if !found {
 		return nil, fmt.Errorf("无法从原始数据中提取过期时间")
 	}
-	
+
 	// 尝试提取注册商
-	for _, pattern := range registrarPatterns {
-		re := regexp.MustCompile(pattern)
+	for _, re := range registrarPatterns {
 		matches := re.FindStringSubmatch(whoisData)
 		if len(matches) > 1 {
 			registrar = strings.TrimSpace(matches[1])
 			break
 		}
 	}
-	
+
 	if registrar == "" {
 		registrar = "Unknown"
 	}
-	
+
 	return &DomainInfo{
 		Domain:     domain,
 		ExpiryDate: expiryDate,
@@ -251,16 +275,23 @@ func parseExpirationFromRawData(domain, whoisData string) (*DomainInfo, error) {
 	}, nil
 }
 
+var (
+	// 缓存日期清理正则表达式
+	utcRegex      = regexp.MustCompile(`\s+UTC`)
+	gmtRegex      = regexp.MustCompile(`\s+GMT`)
+	timezoneRegex = regexp.MustCompile(`\s+\+\d{4}`)
+)
+
 // parseFlexibleDate 灵活解析各种日期格式
 func parseFlexibleDate(dateStr string) (time.Time, error) {
 	// 清理日期字符串
 	dateStr = strings.TrimSpace(dateStr)
-	
+
 	// 移除常见的后缀
-	dateStr = regexp.MustCompile(`\s+UTC`).ReplaceAllString(dateStr, "")
-	dateStr = regexp.MustCompile(`\s+GMT`).ReplaceAllString(dateStr, "")
-	dateStr = regexp.MustCompile(`\s+\+\d{4}`).ReplaceAllString(dateStr, "")
-	
+	dateStr = utcRegex.ReplaceAllString(dateStr, "")
+	dateStr = gmtRegex.ReplaceAllString(dateStr, "")
+	dateStr = timezoneRegex.ReplaceAllString(dateStr, "")
+
 	// 尝试各种日期格式
 	formats := []string{
 		"2006-01-02T15:04:05Z",
@@ -280,12 +311,12 @@ func parseFlexibleDate(dateStr string) (time.Time, error) {
 		"2006-01-02T15:04:05-07:00",
 		"2006-01-02T15:04:05+00:00",
 	}
-	
+
 	for _, format := range formats {
 		if date, err := time.Parse(format, dateStr); err == nil {
 			return date, nil
 		}
 	}
-	
+
 	return time.Time{}, fmt.Errorf("无法解析日期格式: %s", dateStr)
 }

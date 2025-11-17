@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -16,13 +17,14 @@ import (
 
 // NacosConfigManager Nacos HTTP API 配置管理器
 type NacosConfigManager struct {
-	httpClient   *http.Client
-	config       *Config
-	configMutex  sync.RWMutex
-	updateChan   chan *Config
-	accessToken  string
-	tokenExpiry  time.Time
-	stopChan     chan struct{}
+	httpClient  *http.Client
+	config      *Config
+	configMutex sync.RWMutex
+	updateChan  chan *Config
+	accessToken string
+	tokenExpiry time.Time
+	tokenMutex  sync.RWMutex // 保护 accessToken 和 tokenExpiry
+	stopChan    chan struct{}
 }
 
 // NewNacosConfigManager 创建基于 HTTP API 的 Nacos 配置管理器
@@ -32,7 +34,7 @@ func NewNacosConfigManager(localConfig *Config) (*NacosConfigManager, error) {
 		return nil, nil
 	}
 
-	slog.Info("创建Nacos HTTP配置管理器", 
+	slog.Info("创建Nacos HTTP配置管理器",
 		"nacos_url", localConfig.NacosUrl,
 		"namespace_id", localConfig.NamespaceId,
 		"username", localConfig.Username,
@@ -48,18 +50,18 @@ func NewNacosConfigManager(localConfig *Config) (*NacosConfigManager, error) {
 	// 为 HTTPS 连接配置 SSL 设置
 	if strings.HasPrefix(localConfig.NacosUrl, "https://") {
 		slog.Info("检测到HTTPS连接，配置SSL设置", "skip_ssl_verify", localConfig.SkipSSLVerify)
-		
+
 		tlsConfig := &tls.Config{
 			InsecureSkipVerify: localConfig.SkipSSLVerify,
 		}
-		
+
 		httpClient.Transport = &http.Transport{
-			TLSClientConfig: tlsConfig,
+			TLSClientConfig:     tlsConfig,
 			MaxIdleConns:        10,
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     30 * time.Second,
 		}
-		
+
 		if localConfig.SkipSSLVerify {
 			slog.Warn("已禁用SSL证书验证，仅适用于开发/测试环境")
 		}
@@ -120,13 +122,13 @@ func (m *NacosConfigManager) loadConfig() error {
 	m.configMutex.Unlock()
 
 	// 检查配置是否有变化
-	configChanged := oldConfig == nil || 
+	configChanged := oldConfig == nil ||
 		len(oldConfig.Domains) != len(nacosConfig.Domains) ||
 		oldConfig.CheckInterval != nacosConfig.CheckInterval ||
 		oldConfig.Timeout != nacosConfig.Timeout
 
 	if configChanged {
-		slog.Info("Nacos配置已更新", 
+		slog.Info("Nacos配置已更新",
 			"domain_count", len(nacosConfig.Domains),
 			"check_interval", nacosConfig.CheckInterval,
 			"timeout", nacosConfig.Timeout)
@@ -165,8 +167,11 @@ func (m *NacosConfigManager) startPolling() {
 
 // ensureValidToken 确保有有效的访问令牌
 func (m *NacosConfigManager) ensureValidToken() error {
-	// 检查令牌是否过期（提前30秒刷新）
-	if time.Now().Add(30*time.Second).After(m.tokenExpiry) {
+	m.tokenMutex.RLock()
+	needsRefresh := time.Now().Add(30 * time.Second).After(m.tokenExpiry)
+	m.tokenMutex.RUnlock()
+
+	if needsRefresh {
 		return m.refreshToken()
 	}
 	return nil
@@ -175,63 +180,80 @@ func (m *NacosConfigManager) ensureValidToken() error {
 // refreshToken 刷新访问令牌
 func (m *NacosConfigManager) refreshToken() error {
 	loginURL := fmt.Sprintf("%s/nacos/v1/auth/login", m.config.NacosUrl)
-	loginData := fmt.Sprintf("username=%s&password=%s", m.config.Username, m.config.Password)
-	
-	resp, err := m.httpClient.Post(loginURL, "application/x-www-form-urlencoded", strings.NewReader(loginData))
+
+	// 使用 url.Values 安全构建表单数据
+	formData := url.Values{}
+	formData.Set("username", m.config.Username)
+	formData.Set("password", m.config.Password)
+
+	resp, err := m.httpClient.PostForm(loginURL, formData)
 	if err != nil {
 		return fmt.Errorf("登录请求失败: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("读取登录响应失败: %w", err)
 	}
-	
+
 	var loginResp map[string]interface{}
 	if err := json.Unmarshal(body, &loginResp); err != nil {
 		return fmt.Errorf("解析登录响应失败: %w", err)
 	}
-	
+
 	accessToken, ok := loginResp["accessToken"].(string)
 	if !ok {
 		return fmt.Errorf("获取访问令牌失败: %s", string(body))
 	}
-	
+
 	// 获取令牌过期时间（默认18000秒）
 	tokenTtl := 18000.0
 	if ttl, ok := loginResp["tokenTtl"].(float64); ok {
 		tokenTtl = ttl
 	}
-	
+
+	// 使用锁保护 token 更新
+	m.tokenMutex.Lock()
 	m.accessToken = accessToken
 	m.tokenExpiry = time.Now().Add(time.Duration(tokenTtl) * time.Second)
-	
+	m.tokenMutex.Unlock()
+
 	slog.Debug("访问令牌已刷新", "expires_in", tokenTtl)
 	return nil
 }
 
 // getConfig 获取配置内容
 func (m *NacosConfigManager) getConfig() (string, error) {
-	configURL := fmt.Sprintf("%s/nacos/v1/cs/configs?dataId=%s&group=%s&tenant=%s&accessToken=%s",
-		m.config.NacosUrl, m.config.DataId, m.config.Group, m.config.NamespaceId, m.accessToken)
-	
+	// 使用 url.Values 安全构建 URL
+	baseURL := fmt.Sprintf("%s/nacos/v1/cs/configs", m.config.NacosUrl)
+	params := url.Values{}
+	params.Set("dataId", m.config.DataId)
+	params.Set("group", m.config.Group)
+	params.Set("tenant", m.config.NamespaceId)
+
+	m.tokenMutex.RLock()
+	params.Set("accessToken", m.accessToken)
+	m.tokenMutex.RUnlock()
+
+	configURL := fmt.Sprintf("%s?%s", baseURL, params.Encode())
+
 	resp, err := m.httpClient.Get(configURL)
 	if err != nil {
 		return "", fmt.Errorf("获取配置请求失败: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("读取配置响应失败: %w", err)
 	}
-	
+
 	content := string(body)
 	if content == "" || content == "config data not exist" {
 		return "", fmt.Errorf("配置不存在或为空")
 	}
-	
+
 	return content, nil
 }
 
@@ -240,7 +262,7 @@ func (m *NacosConfigManager) GetConfig() *Config {
 	if m == nil {
 		return nil
 	}
-	
+
 	m.configMutex.RLock()
 	defer m.configMutex.RUnlock()
 	return m.config
@@ -256,10 +278,24 @@ func (m *NacosConfigManager) GetUpdateChannel() <-chan *Config {
 
 // Close 关闭Nacos配置管理器
 func (m *NacosConfigManager) Close() {
-	if m != nil {
-		close(m.stopChan)
-		close(m.updateChan)
-		slog.Info("Nacos配置管理器已关闭")
+	if m == nil {
+		return
 	}
-}
 
+	// 安全关闭 channel
+	select {
+	case <-m.stopChan:
+		// 已经关闭
+	default:
+		close(m.stopChan)
+	}
+
+	select {
+	case <-m.updateChan:
+		// 已经关闭
+	default:
+		close(m.updateChan)
+	}
+
+	slog.Info("Nacos配置管理器已关闭")
+}

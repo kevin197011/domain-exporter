@@ -1,15 +1,17 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
-	"log"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -26,58 +28,38 @@ func main() {
 	// 加载配置
 	config, err := LoadConfig(*configFile)
 	if err != nil {
-		log.Fatalf("加载配置文件失败: %v", err)
+		slog.Error("加载配置文件失败", "error", err)
+		os.Exit(1)
 	}
 
-	// 根据配置设置日志级别
-	logLevel := slog.LevelInfo
-	switch strings.ToLower(config.LogLevel) {
-	case "debug":
-		logLevel = slog.LevelDebug
-	case "warn", "warning":
-		logLevel = slog.LevelWarn
-	case "error":
-		logLevel = slog.LevelError
-	default:
-		logLevel = slog.LevelInfo
-	}
-	
-	// 环境变量可以覆盖配置文件
+	// 设置日志级别
+	logLevel := parseLogLevel(config.LogLevel)
 	if envLogLevel := os.Getenv("LOG_LEVEL"); envLogLevel != "" {
-		switch strings.ToLower(envLogLevel) {
-		case "debug":
-			logLevel = slog.LevelDebug
-		case "warn", "warning":
-			logLevel = slog.LevelWarn
-		case "error":
-			logLevel = slog.LevelError
-		default:
-			logLevel = slog.LevelInfo
-		}
+		logLevel = parseLogLevel(envLogLevel)
 	}
-	
+
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 		Level: logLevel,
 	}))
 	slog.SetDefault(logger)
 
 	// 打印详细的配置信息用于调试
-	slog.Info("配置加载完成", 
+	slog.Info("配置加载完成",
 		"domains", len(config.Domains),
 		"check_interval", config.CheckInterval,
 		"port", config.Port,
 		"timeout", config.Timeout,
 		"nacos_enabled", config.IsNacosEnabled())
-	
+
 	// 如果启用了Nacos，打印详细的Nacos配置
 	if config.IsNacosEnabled() {
-		slog.Info("Nacos配置详情", 
+		slog.Info("Nacos配置详情",
 			"nacos_url", config.NacosUrl,
 			"username", config.Username,
 			"namespace_id", config.NamespaceId,
 			"data_id", config.DataId,
 			"group", config.Group)
-		
+
 		// 打印环境变量以便调试
 		slog.Debug("环境变量调试信息",
 			"NACOS_URL", os.Getenv("NACOS_URL"),
@@ -101,50 +83,42 @@ func main() {
 	go exporter.StartMonitoring()
 
 	// 设置HTTP路由
-	http.Handle("/metrics", promhttp.Handler())
-	http.HandleFunc("/trigger", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "POST" {
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.Handler())
+	mux.HandleFunc("/trigger", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 		exporter.TriggerCheck()
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		fmt.Fprintf(w, `{"status": "triggered", "message": "域名检查已触发"}`)
+		json.NewEncoder(w).Encode(map[string]string{
+			"status":  "triggered",
+			"message": "域名检查已触发",
+		})
 	})
-	http.HandleFunc("/config", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/config", func(w http.ResponseWriter, r *http.Request) {
 		currentConfig := exporter.getCurrentConfig()
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		
-		// 构建详细的配置信息
-		domainsJson := "["
-		for i, domain := range currentConfig.Domains {
-			if i > 0 {
-				domainsJson += ","
-			}
-			domainsJson += fmt.Sprintf(`"%s"`, domain)
-		}
-		domainsJson += "]"
-		
-		fmt.Fprintf(w, `{
-			"domains": %s,
-			"domain_count": %d,
-			"check_interval": %d,
-			"port": %d,
-			"log_level": "%s",
-			"timeout": %d,
+
+		configJSON := map[string]interface{}{
+			"domains":          currentConfig.Domains,
+			"domain_count":     len(currentConfig.Domains),
+			"check_interval":   currentConfig.CheckInterval,
+			"port":             currentConfig.Port,
+			"log_level":        currentConfig.LogLevel,
+			"timeout":          currentConfig.Timeout,
 			"detection_method": "whois",
-			"execution_mode": "serial",
-			"nacos_enabled": %t,
-			"nacos_url": "%s",
-			"nacos_namespace": "%s",
-			"nacos_data_id": "%s",
-			"nacos_group": "%s"
-		}`, domainsJson, len(currentConfig.Domains), currentConfig.CheckInterval, currentConfig.Port,
-			currentConfig.LogLevel, currentConfig.Timeout,
-			currentConfig.IsNacosEnabled(),
-			currentConfig.NacosUrl, currentConfig.NamespaceId, currentConfig.DataId, currentConfig.Group)
+			"execution_mode":   "serial",
+			"nacos_enabled":    currentConfig.IsNacosEnabled(),
+			"nacos_url":        currentConfig.NacosUrl,
+			"nacos_namespace":  currentConfig.NamespaceId,
+			"nacos_data_id":    currentConfig.DataId,
+			"nacos_group":      currentConfig.Group,
+		}
+		json.NewEncoder(w).Encode(configJSON)
 	})
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprintf(w, `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -155,14 +129,14 @@ func main() {
 	<style>
 		body { font-family: Arial, sans-serif; margin: 40px; }
 		h1 { color: #333; }
-		.button { 
-			display: inline-block; 
-			padding: 10px 20px; 
-			margin: 10px 5px; 
-			background-color: #007cba; 
-			color: white; 
-			text-decoration: none; 
-			border-radius: 5px; 
+		.button {
+			display: inline-block;
+			padding: 10px 20px;
+			margin: 10px 5px;
+			background-color: #007cba;
+			color: white;
+			text-decoration: none;
+			border-radius: 5px;
 			border: none;
 			cursor: pointer;
 		}
@@ -214,21 +188,47 @@ func main() {
 	slog.Info("启动HTTP服务", "port", serverPort)
 	server := &http.Server{
 		Addr:    ":" + serverPort,
-		Handler: nil,
+		Handler: mux,
 	}
 
 	// 优雅关闭
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
 	go func() {
-		sigChan := make(chan os.Signal, 1)
-		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 		<-sigChan
 		slog.Info("收到关闭信号，正在关闭服务...")
+
+		// 停止 exporter
 		exporter.Stop()
-		server.Close()
+
+		// 优雅关闭 HTTP 服务
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		if err := server.Shutdown(ctx); err != nil {
+			slog.Error("HTTP服务关闭失败", "error", err)
+		} else {
+			slog.Info("HTTP服务已优雅关闭")
+		}
 	}()
 
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		slog.Error("HTTP服务启动失败", "error", err)
 		os.Exit(1)
+	}
+}
+
+// parseLogLevel 解析日志级别字符串
+func parseLogLevel(level string) slog.Level {
+	switch strings.ToLower(level) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn", "warning":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
 	}
 }
