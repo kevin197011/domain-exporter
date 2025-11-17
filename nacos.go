@@ -124,13 +124,11 @@ func (m *NacosConfigManager) loadConfig() error {
 	// 检查配置是否有变化
 	configChanged := oldConfig == nil ||
 		len(oldConfig.Domains) != len(nacosConfig.Domains) ||
-		oldConfig.CheckInterval != nacosConfig.CheckInterval ||
 		oldConfig.Timeout != nacosConfig.Timeout
 
 	if configChanged {
 		slog.Info("Nacos配置已更新",
 			"domain_count", len(nacosConfig.Domains),
-			"check_interval", nacosConfig.CheckInterval,
 			"timeout", nacosConfig.Timeout)
 
 		// 通知配置更新

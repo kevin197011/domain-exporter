@@ -11,11 +11,10 @@ import (
 // Config 配置结构
 type Config struct {
 	// 业务配置（从Nacos获取）
-	Domains       []string `yaml:"domains"`
-	CheckInterval int      `yaml:"check_interval"`
-	Port          int      `yaml:"port"`
-	LogLevel      string   `yaml:"log_level"`
-	Timeout       int      `yaml:"timeout"`
+	Domains  []string `yaml:"domains"`
+	Port     int      `yaml:"port"`
+	LogLevel string   `yaml:"log_level"`
+	Timeout  int      `yaml:"timeout"`
 
 	// Nacos连接配置（从本地配置文件获取）
 	NacosUrl      string `yaml:"nacos_url"`
@@ -89,11 +88,6 @@ func loadFromEnv(config *Config) {
 			config.Domains[i] = strings.TrimSpace(domain)
 		}
 	}
-	if val := os.Getenv("CHECK_INTERVAL"); val != "" {
-		if interval, err := strconv.Atoi(val); err == nil {
-			config.CheckInterval = interval
-		}
-	}
 	if val := os.Getenv("PORT"); val != "" {
 		if port, err := strconv.Atoi(val); err == nil {
 			config.Port = port
@@ -137,9 +131,6 @@ func mergeConfig(envConfig, fileConfig *Config) {
 	if len(envConfig.Domains) == 0 {
 		envConfig.Domains = fileConfig.Domains
 	}
-	if envConfig.CheckInterval == 0 {
-		envConfig.CheckInterval = fileConfig.CheckInterval
-	}
 	if envConfig.Port == 0 {
 		envConfig.Port = fileConfig.Port
 	}
@@ -156,9 +147,6 @@ func mergeConfig(envConfig, fileConfig *Config) {
 // applyDefaults 应用默认值配置
 func applyDefaults(config *Config) {
 	// 业务配置默认值
-	if config.CheckInterval == 0 {
-		config.CheckInterval = 3600 // 默认1小时
-	}
 	if config.Port == 0 {
 		config.Port = 8080
 	}

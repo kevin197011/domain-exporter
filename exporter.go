@@ -324,14 +324,6 @@ func (e *DomainExporter) logConfigChanges(oldConfig, newConfig *Config) {
 		}
 	}
 
-	// 检查检查间隔变化
-	if oldConfig.CheckInterval != newConfig.CheckInterval {
-		changes["check_interval"] = map[string]interface{}{
-			"old": oldConfig.CheckInterval,
-			"new": newConfig.CheckInterval,
-		}
-	}
-
 	// 检查端口变化
 	if oldConfig.Port != newConfig.Port {
 		changes["port"] = map[string]interface{}{
@@ -361,9 +353,6 @@ func (e *DomainExporter) logConfigChanges(oldConfig, newConfig *Config) {
 		slog.Info("检测到配置参数变化", "changes", changes)
 
 		// 特别提醒重要变化
-		if _, exists := changes["check_interval"]; exists {
-			slog.Debug("检查间隔配置已更新（注意：当前使用固定时间执行，每天凌晨3点）")
-		}
 		if _, exists := changes["domains"]; exists {
 			slog.Info("域名列表已更新，立即触发检查")
 		}

@@ -33,7 +33,6 @@ helm install domain-exporter ./domain-exporter -f ./domain-exporter/values-prod.
 # 或者通过命令行设置参数
 helm install domain-exporter ./domain-exporter \
   --set config.domains="yourdomain.com,anotherdomain.com" \
-  --set config.checkInterval=1800 \
   --set replicaCount=2
 ```
 
@@ -59,10 +58,10 @@ helm install domain-exporter-dev ./domain-exporter -f ./domain-exporter/values-d
 | 参数 | 描述 | 默认值 |
 |------|------|--------|
 | `config.domains` | 监控的域名列表（逗号分隔） | `"example.com,test.com"` |
-| `config.checkInterval` | 检查间隔（秒） | `3600` |
 | `config.port` | HTTP 服务端口 | `8080` |
 | `config.logLevel` | 日志级别 | `"info"` |
-| `config.timeout` | WHOIS 查询超时时间（秒） | `30` |
+| `config.timeout` | WHOIS查询超时时间（秒） | `30` |
+| 定时执行 | 每天凌晨3点自动执行 | 固定 |
 
 ### Nacos 配置
 
@@ -157,7 +156,7 @@ helm upgrade domain-exporter ./domain-exporter
 
 # 升级并修改配置
 helm upgrade domain-exporter ./domain-exporter \
-  --set config.checkInterval=1800
+  --set config.domains="yourdomain.com,anotherdomain.com"
 ```
 
 ## 卸载
